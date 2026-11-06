@@ -1,0 +1,429 @@
+[
+  {
+    "id": "ei-001",
+    "question": "What does error code DB-204 indicate?",
+    "expected_answer": "DB-204 indicates a connection timeout error when the database server does not respond within the configured timeout period.",
+    "category": "exact-identifier",
+    "source_spans": [{"document_id": "doc-troubleshooting", "start_char": 1024, "end_char": 1280}]
+  },
+  {
+    "id": "ei-002",
+    "question": "What is the default value of max_connections in config.json?",
+    "expected_answer": "The default value of max_connections in config.json is 100.",
+    "category": "exact-identifier",
+    "source_spans": [{"document_id": "doc-deployment", "start_char": 3200, "end_char": 3450}]
+  },
+  {
+    "id": "ei-003",
+    "question": "Which RFC does the OAuth2 authentication endpoint follow?",
+    "expected_answer": "The OAuth2 authentication endpoint follows RFC-6749 for authorization framework.",
+    "category": "exact-identifier",
+    "source_spans": [{"document_id": "doc-security", "start_char": 512, "end_char": 780}]
+  },
+  {
+    "id": "ei-004",
+    "question": "What is the purpose of the PG_TRGM extension?",
+    "expected_answer": "PG_TRGM provides trigram-based text similarity search for fuzzy matching queries.",
+    "category": "exact-identifier",
+    "source_spans": [{"document_id": "doc-data-model", "start_char": 4096, "end_char": 4350}]
+  },
+  {
+    "id": "ei-005",
+    "question": "How do you resolve error_code_500 in the deployment guide?",
+    "expected_answer": "Error_code_500 is resolved by checking the application logs, verifying database connectivity, and restarting the service with the --recovery flag.",
+    "category": "exact-identifier",
+    "source_spans": [{"document_id": "doc-troubleshooting", "start_char": 5120, "end_char": 5600}]
+  },
+  {
+    "id": "ei-006",
+    "question": "What version introduced the v2.0.1 API breaking changes?",
+    "expected_answer": "Version v2.0.1 introduced breaking changes to the pagination API, replacing cursor-based pagination with offset-based pagination.",
+    "category": "exact-identifier",
+    "source_spans": [{"document_id": "doc-changelog", "start_char": 2048, "end_char": 2400}]
+  },
+  {
+    "id": "ei-007",
+    "question": "What does the MAX_RETRIES environment variable control?",
+    "expected_answer": "MAX_RETRIES controls the number of automatic retry attempts for failed HTTP requests to external services before returning an error.",
+    "category": "exact-identifier",
+    "source_spans": [{"document_id": "doc-deployment", "start_char": 6400, "end_char": 6700}]
+  },
+  {
+    "id": "ei-008",
+    "question": "Where is the docker-compose.yml configuration documented?",
+    "expected_answer": "The docker-compose.yml configuration is documented in the Deployment Guide under the Container Orchestration section.",
+    "category": "exact-identifier",
+    "source_spans": [{"document_id": "doc-deployment", "start_char": 8192, "end_char": 8600}]
+  },
+  {
+    "id": "ei-009",
+    "question": "What is the UTF-8 encoding requirement for API request bodies?",
+    "expected_answer": "All API request bodies must use UTF-8 encoding. Non-UTF-8 content returns a 400 Bad Request with error code ENCODING_INVALID.",
+    "category": "exact-identifier",
+    "source_spans": [{"document_id": "doc-api-reference", "start_char": 1500, "end_char": 1800}]
+  },
+  {
+    "id": "ei-010",
+    "question": "How is the TCP/IP connection pool configured?",
+    "expected_answer": "TCP/IP connection pool is configured via the pool_size, max_overflow, and pool_timeout parameters in the database configuration section.",
+    "category": "exact-identifier",
+    "source_spans": [{"document_id": "doc-performance", "start_char": 3072, "end_char": 3400}]
+  },
+  {
+    "id": "ei-011",
+    "question": "What does the k8s-cluster deployment manifest require?",
+    "expected_answer": "The k8s-cluster deployment manifest requires namespace, resource limits, health check probes, and persistent volume claims.",
+    "category": "exact-identifier",
+    "source_spans": [{"document_id": "doc-deployment", "start_char": 10240, "end_char": 10700}]
+  },
+  {
+    "id": "fl-001",
+    "question": "What is the maximum number of concurrent connections supported?",
+    "expected_answer": "The system supports a maximum of 500 concurrent connections per node.",
+    "category": "factual-lookup",
+    "source_spans": [{"document_id": "doc-architecture", "start_char": 2048, "end_char": 2300}]
+  },
+  {
+    "id": "fl-002",
+    "question": "Which port does the admin API listen on by default?",
+    "expected_answer": "The admin API listens on port 9090 by default.",
+    "category": "factual-lookup",
+    "source_spans": [{"document_id": "doc-api-reference", "start_char": 256, "end_char": 500}]
+  },
+  {
+    "id": "fl-003",
+    "question": "What is the recommended memory allocation for production?",
+    "expected_answer": "The recommended memory allocation for production is 4 GB minimum, 8 GB recommended per node.",
+    "category": "factual-lookup",
+    "source_spans": [{"document_id": "doc-deployment", "start_char": 1024, "end_char": 1350}]
+  },
+  {
+    "id": "fl-004",
+    "question": "How long is the default session timeout?",
+    "expected_answer": "The default session timeout is 30 minutes of inactivity.",
+    "category": "factual-lookup",
+    "source_spans": [{"document_id": "doc-security", "start_char": 2048, "end_char": 2350}]
+  },
+  {
+    "id": "fl-005",
+    "question": "What encryption algorithm is used for data at rest?",
+    "expected_answer": "AES-256-GCM encryption is used for data at rest.",
+    "category": "factual-lookup",
+    "source_spans": [{"document_id": "doc-security", "start_char": 4096, "end_char": 4400}]
+  },
+  {
+    "id": "fl-006",
+    "question": "Which databases are supported as storage backends?",
+    "expected_answer": "PostgreSQL 14+, MySQL 8.0+, and SQLite 3.35+ are supported as storage backends.",
+    "category": "factual-lookup",
+    "source_spans": [{"document_id": "doc-architecture", "start_char": 512, "end_char": 800}]
+  },
+  {
+    "id": "fl-007",
+    "question": "What is the minimum Python version required?",
+    "expected_answer": "Python 3.11 or higher is required.",
+    "category": "factual-lookup",
+    "source_spans": [{"document_id": "doc-quickstart", "start_char": 128, "end_char": 380}]
+  },
+  {
+    "id": "fl-008",
+    "question": "How many replicas are recommended for high availability?",
+    "expected_answer": "A minimum of 3 replicas across different availability zones is recommended for high availability.",
+    "category": "factual-lookup",
+    "source_spans": [{"document_id": "doc-deployment", "start_char": 4096, "end_char": 4450}]
+  },
+  {
+    "id": "fl-009",
+    "question": "What is the default page size for query results?",
+    "expected_answer": "The default page size for query results is 25 items per page.",
+    "category": "factual-lookup",
+    "source_spans": [{"document_id": "doc-api-reference", "start_char": 3072, "end_char": 3350}]
+  },
+  {
+    "id": "fl-010",
+    "question": "Which cloud providers are officially supported?",
+    "expected_answer": "AWS, Google Cloud Platform, and Microsoft Azure are officially supported.",
+    "category": "factual-lookup",
+    "source_spans": [{"document_id": "doc-deployment", "start_char": 512, "end_char": 800}]
+  },
+  {
+    "id": "fl-011",
+    "question": "What is the maximum document size for indexing?",
+    "expected_answer": "The maximum document size for indexing is 50 MB per file.",
+    "category": "factual-lookup",
+    "source_spans": [{"document_id": "doc-data-model", "start_char": 1024, "end_char": 1300}]
+  },
+  {
+    "id": "mh-001",
+    "question": "How do connection pool settings differ between development and production environments?",
+    "expected_answer": "Development uses pool_size=5 with no overflow, while production uses pool_size=20 with max_overflow=10 and pool_pre_ping enabled for connection health checking.",
+    "category": "multi-hop",
+    "source_spans": [
+      {"document_id": "doc-deployment", "start_char": 2048, "end_char": 2400},
+      {"document_id": "doc-performance", "start_char": 3072, "end_char": 3500}
+    ]
+  },
+  {
+    "id": "mh-002",
+    "question": "What are the security implications of the default authentication configuration?",
+    "expected_answer": "The default configuration uses JWT with 1-hour expiry and no refresh tokens, which means users must re-authenticate frequently. The HMAC-SHA256 signing key must be rotated every 90 days per the security policy.",
+    "category": "multi-hop",
+    "source_spans": [
+      {"document_id": "doc-security", "start_char": 1024, "end_char": 1500},
+      {"document_id": "doc-security", "start_char": 6144, "end_char": 6500}
+    ]
+  },
+  {
+    "id": "mh-003",
+    "question": "How does the retry mechanism interact with the circuit breaker pattern?",
+    "expected_answer": "Retries are attempted up to MAX_RETRIES times with exponential backoff. If the circuit breaker is open, retries are skipped and a fallback response is returned immediately. The circuit breaker opens after 5 consecutive failures.",
+    "category": "multi-hop",
+    "source_spans": [
+      {"document_id": "doc-architecture", "start_char": 6144, "end_char": 6600},
+      {"document_id": "doc-api-reference", "start_char": 8192, "end_char": 8500}
+    ]
+  },
+  {
+    "id": "mh-004",
+    "question": "What steps are needed to migrate from v1 to v2 API while maintaining backward compatibility?",
+    "expected_answer": "Run the migration script to update endpoint paths, enable the v1 compatibility shim in config, update client SDK versions, and test with the provided migration test suite.",
+    "category": "multi-hop",
+    "source_spans": [
+      {"document_id": "doc-changelog", "start_char": 4096, "end_char": 4600},
+      {"document_id": "doc-api-reference", "start_char": 10240, "end_char": 10700}
+    ]
+  },
+  {
+    "id": "mh-005",
+    "question": "How do memory limits affect both indexing throughput and query latency?",
+    "expected_answer": "Indexing throughput scales linearly with available memory up to 8 GB, after which returns diminish. Query latency is primarily affected when the working set exceeds available memory, causing disk-based lookups that add 5-10ms per cache miss.",
+    "category": "multi-hop",
+    "source_spans": [
+      {"document_id": "doc-performance", "start_char": 1024, "end_char": 1500},
+      {"document_id": "doc-performance", "start_char": 5120, "end_char": 5600}
+    ]
+  },
+  {
+    "id": "mh-006",
+    "question": "What is the relationship between replication factor and data consistency guarantees?",
+    "expected_answer": "With replication factor N, the system guarantees consistency with quorum writes (N/2+1 acknowledgments). Increasing replication factor improves read availability but increases write latency proportionally.",
+    "category": "multi-hop",
+    "source_spans": [
+      {"document_id": "doc-architecture", "start_char": 3072, "end_char": 3500},
+      {"document_id": "doc-data-model", "start_char": 6144, "end_char": 6500}
+    ]
+  },
+  {
+    "id": "mh-007",
+    "question": "How do backup schedules interact with the maintenance window configuration?",
+    "expected_answer": "Backups are automatically deferred if they overlap with a scheduled maintenance window. The backup is rescheduled to start 15 minutes after the maintenance window ends.",
+    "category": "multi-hop",
+    "source_spans": [
+      {"document_id": "doc-deployment", "start_char": 12288, "end_char": 12600},
+      {"document_id": "doc-deployment", "start_char": 14336, "end_char": 14700}
+    ]
+  },
+  {
+    "id": "mh-008",
+    "question": "What are the trade-offs between synchronous and asynchronous replication modes?",
+    "expected_answer": "Synchronous replication guarantees zero data loss but adds 2-5ms write latency per replica. Asynchronous replication has near-zero overhead but risks losing up to 1 second of writes during failover.",
+    "category": "multi-hop",
+    "source_spans": [
+      {"document_id": "doc-architecture", "start_char": 4096, "end_char": 4500},
+      {"document_id": "doc-performance", "start_char": 7168, "end_char": 7500}
+    ]
+  },
+  {
+    "id": "mh-009",
+    "question": "How does the caching layer affect both read performance and memory usage?",
+    "expected_answer": "The LRU cache improves read performance by 10x for repeated queries but consumes up to 25% of allocated memory. Cache eviction follows a two-tier policy: hot items in memory, warm items on local SSD.",
+    "category": "multi-hop",
+    "source_spans": [
+      {"document_id": "doc-performance", "start_char": 2048, "end_char": 2500},
+      {"document_id": "doc-architecture", "start_char": 8192, "end_char": 8600}
+    ]
+  },
+  {
+    "id": "mh-010",
+    "question": "What configuration changes are needed when scaling from single-node to cluster deployment?",
+    "expected_answer": "Switch from local storage to distributed storage, enable cluster discovery via DNS or static seed list, configure quorum settings, and set up load balancer health checks.",
+    "category": "multi-hop",
+    "source_spans": [
+      {"document_id": "doc-deployment", "start_char": 6144, "end_char": 6600},
+      {"document_id": "doc-architecture", "start_char": 10240, "end_char": 10700}
+    ]
+  },
+  {
+    "id": "ua-001",
+    "question": "What is the stock price of the company that develops this system?",
+    "expected_answer": "This information is not available in the documentation.",
+    "category": "unanswerable",
+    "source_spans": []
+  },
+  {
+    "id": "ua-002",
+    "question": "How does this system compare to MongoDB in terms of write throughput?",
+    "expected_answer": "The documentation does not contain comparative benchmarks with MongoDB.",
+    "category": "unanswerable",
+    "source_spans": []
+  },
+  {
+    "id": "ua-003",
+    "question": "What are the salary ranges for engineers working on this project?",
+    "expected_answer": "This information is not available in the technical documentation.",
+    "category": "unanswerable",
+    "source_spans": []
+  },
+  {
+    "id": "ua-004",
+    "question": "When will the system support GraphQL natively?",
+    "expected_answer": "Future roadmap details are not available in the current documentation.",
+    "category": "unanswerable",
+    "source_spans": []
+  },
+  {
+    "id": "ua-005",
+    "question": "What is the system's market share in the enterprise database segment?",
+    "expected_answer": "Market share data is not available in the technical documentation.",
+    "category": "unanswerable",
+    "source_spans": []
+  },
+  {
+    "id": "ua-006",
+    "question": "How many customers currently use this system in production?",
+    "expected_answer": "Customer count information is not available in the documentation.",
+    "category": "unanswerable",
+    "source_spans": []
+  },
+  {
+    "id": "ua-007",
+    "question": "What programming language is the storage engine kernel written in?",
+    "expected_answer": "The internal implementation language of the storage engine is not documented.",
+    "category": "unanswerable",
+    "source_spans": []
+  },
+  {
+    "id": "ua-008",
+    "question": "Does the system support quantum-resistant encryption algorithms?",
+    "expected_answer": "Quantum-resistant encryption is not mentioned in the current documentation.",
+    "category": "unanswerable",
+    "source_spans": []
+  },
+  {
+    "id": "ua-009",
+    "question": "What is the expected release date for version 4.0?",
+    "expected_answer": "Release schedules for future versions are not available in the documentation.",
+    "category": "unanswerable",
+    "source_spans": []
+  },
+  {
+    "id": "ua-010",
+    "question": "How does the system handle GDPR data residency requirements for EU customers?",
+    "expected_answer": "GDPR-specific data residency handling is not covered in the current documentation.",
+    "category": "unanswerable",
+    "source_spans": []
+  },
+  {
+    "id": "am-001",
+    "question": "How do you configure the timeout?",
+    "expected_answer": "Multiple timeouts exist: connection timeout (30s default), query timeout (60s default), and session timeout (30min default). Each is configured via different parameters.",
+    "category": "ambiguous",
+    "source_spans": [
+      {"document_id": "doc-performance", "start_char": 4096, "end_char": 4400},
+      {"document_id": "doc-security", "start_char": 2048, "end_char": 2350},
+      {"document_id": "doc-deployment", "start_char": 3200, "end_char": 3500}
+    ]
+  },
+  {
+    "id": "am-002",
+    "question": "What are the limits?",
+    "expected_answer": "Rate limits (1000 req/min), connection limits (500 concurrent), storage limits (1 TB per namespace), and query result limits (10000 rows) are each documented separately.",
+    "category": "ambiguous",
+    "source_spans": [
+      {"document_id": "doc-api-reference", "start_char": 5120, "end_char": 5400},
+      {"document_id": "doc-architecture", "start_char": 2048, "end_char": 2300},
+      {"document_id": "doc-data-model", "start_char": 2048, "end_char": 2300}
+    ]
+  },
+  {
+    "id": "am-003",
+    "question": "How does authentication work?",
+    "expected_answer": "Authentication supports JWT tokens, API keys, and mTLS. JWT is the default for web clients, API keys for service-to-service, and mTLS for infrastructure components.",
+    "category": "ambiguous",
+    "source_spans": [
+      {"document_id": "doc-security", "start_char": 512, "end_char": 1024},
+      {"document_id": "doc-api-reference", "start_char": 2048, "end_char": 2500}
+    ]
+  },
+  {
+    "id": "am-004",
+    "question": "What is the default configuration?",
+    "expected_answer": "Default configuration varies by component: database defaults to PostgreSQL with pool_size=10, API defaults to port 8080 with JSON content type, and logging defaults to INFO level.",
+    "category": "ambiguous",
+    "source_spans": [
+      {"document_id": "doc-quickstart", "start_char": 512, "end_char": 1024},
+      {"document_id": "doc-deployment", "start_char": 1024, "end_char": 1500}
+    ]
+  },
+  {
+    "id": "am-005",
+    "question": "How do you handle errors?",
+    "expected_answer": "Client errors return structured JSON with error code and message. Server errors trigger automatic retries with exponential backoff. Unrecoverable errors are logged and reported via the alerting system.",
+    "category": "ambiguous",
+    "source_spans": [
+      {"document_id": "doc-api-reference", "start_char": 6144, "end_char": 6500},
+      {"document_id": "doc-troubleshooting", "start_char": 256, "end_char": 700}
+    ]
+  },
+  {
+    "id": "am-006",
+    "question": "What are the best practices?",
+    "expected_answer": "Best practices cover connection pooling (use pool_pre_ping), query optimization (use prepared statements), security (rotate keys every 90 days), and deployment (use rolling updates).",
+    "category": "ambiguous",
+    "source_spans": [
+      {"document_id": "doc-performance", "start_char": 8192, "end_char": 8600},
+      {"document_id": "doc-security", "start_char": 8192, "end_char": 8500},
+      {"document_id": "doc-deployment", "start_char": 16384, "end_char": 16700}
+    ]
+  },
+  {
+    "id": "am-007",
+    "question": "How do you set up monitoring?",
+    "expected_answer": "Monitoring involves Prometheus metrics endpoint (/metrics), Grafana dashboards (pre-built templates available), structured logging to stdout, and health check endpoints.",
+    "category": "ambiguous",
+    "source_spans": [
+      {"document_id": "doc-deployment", "start_char": 18432, "end_char": 18800},
+      {"document_id": "doc-architecture", "start_char": 12288, "end_char": 12600}
+    ]
+  },
+  {
+    "id": "am-008",
+    "question": "What is the recommended approach for scaling?",
+    "expected_answer": "Vertical scaling is recommended up to 16 CPU / 32 GB RAM. Beyond that, horizontal scaling with 3-5 node clusters using consistent hashing for data distribution.",
+    "category": "ambiguous",
+    "source_spans": [
+      {"document_id": "doc-performance", "start_char": 6144, "end_char": 6500},
+      {"document_id": "doc-architecture", "start_char": 10240, "end_char": 10600}
+    ]
+  },
+  {
+    "id": "am-009",
+    "question": "How do you configure security?",
+    "expected_answer": "Security configuration includes TLS termination, authentication method selection, role-based access control, audit logging, and encryption at rest settings.",
+    "category": "ambiguous",
+    "source_spans": [
+      {"document_id": "doc-security", "start_char": 256, "end_char": 512},
+      {"document_id": "doc-security", "start_char": 3072, "end_char": 3500}
+    ]
+  },
+  {
+    "id": "am-010",
+    "question": "What are the performance considerations?",
+    "expected_answer": "Key performance considerations include connection pool sizing, query plan caching, index selection, memory allocation for caching, and network latency between components.",
+    "category": "ambiguous",
+    "source_spans": [
+      {"document_id": "doc-performance", "start_char": 256, "end_char": 700},
+      {"document_id": "doc-performance", "start_char": 9216, "end_char": 9600}
+    ]
+  }
+]
