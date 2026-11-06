@@ -98,7 +98,25 @@ Built with a **FastAPI** backend, **PostgreSQL (`pgvector`)**, and a **React + V
 
 ## Getting Started
 
-### Prerequisites
+### Quick Start with Docker (Recommended)
+
+Run the complete QueryFusion platform (PostgreSQL 16 with `pgvector`, FastAPI backend, and React frontend) with a single command:
+
+```bash
+# 1. Copy environment template and add your GEMINI_API_KEY
+cp .env.example .env
+
+# 2. Launch the full stack
+docker compose up -d
+
+# 3. Open http://localhost:8000 in your browser
+```
+
+---
+
+### Local Development Setup
+
+#### Prerequisites
 * Python 3.11+
 * Node.js 20+
 * PostgreSQL instance with `pgvector` extension enabled
