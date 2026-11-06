@@ -1,5 +1,7 @@
 # QueryFusion
 
+[![CI](https://github.com/vivek-kanugula/QueryFusion/actions/workflows/ci.yml/badge.svg)](https://github.com/vivek-kanugula/QueryFusion/actions/workflows/ci.yml)
+
 **Production-Grade Hybrid Retrieval-Augmented Generation & Empirical Evaluation Platform**
 
 QueryFusion is a full-stack, evaluation-driven Retrieval-Augmented Generation (RAG) platform. It provides a comparative workbench to analyze how retrieval strategies (Dense vs. Sparse BM25 vs. Hybrid), chunking methods (Fixed-size, Structure-aware, Semantic), and Cross-Encoder reranking impact retrieval accuracy, answer faithfulness, and latency.
