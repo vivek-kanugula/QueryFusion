@@ -29,6 +29,9 @@ def index_document(
 
     Uses compensating rollback if any phase fails.
     """
+    if document.id is None:
+        document.id = uuid.uuid4()
+
     texts = [c.text for c in chunks]
     embeddings = embed_texts(texts) if texts else []
 
