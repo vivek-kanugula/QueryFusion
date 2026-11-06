@@ -27,8 +27,11 @@ class Settings(BaseSettings):
     @field_validator("database_url", "database_url_direct", mode="before")
     @classmethod
     def normalize_postgres_url(cls, v: str | None) -> str | None:
-        if v and v.startswith("postgresql://"):
-            return "postgresql+psycopg://" + v[len("postgresql://") :]
+        if v:
+            if v.startswith("postgres://"):
+                return "postgresql+psycopg://" + v[len("postgres://") :]
+            if v.startswith("postgresql://"):
+                return "postgresql+psycopg://" + v[len("postgresql://") :]
         return v
 
     # Storage (S3-compatible)

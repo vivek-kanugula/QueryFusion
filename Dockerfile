@@ -35,4 +35,4 @@ ENV FASTEMBED_CACHE_PATH=/tmp/fastembed_cache
 EXPOSE 8000
 
 ENTRYPOINT ["/app/scripts/entrypoint.sh"]
-CMD ["uvicorn", "hybrid_rag.app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+CMD ["web"]
