@@ -1,8 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import {
   AlertCircle,
+  Check,
   CheckCircle2,
   ChevronDown,
+  Copy,
+  Download,
   FileText,
   Filter,
   Loader2,
@@ -10,6 +13,7 @@ import {
   Search,
   Shield,
   X,
+  Zap,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
@@ -281,6 +285,83 @@ export default function QA() {
     citation_coverage?: number;
     completeness_score?: number;
   } | null;
+
+  const [copied, setCopied] = useState(false);
+
+  const handleCopyAnswer = () => {
+    if (!answer?.answer) return;
+    navigator.clipboard.writeText(answer.answer);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleExportMarkdown = () => {
+    if (!answer?.answer) return;
+    const dateStr = new Date().toISOString();
+    const confScore =
+      confidence?.overall_score != null
+        ? `${(confidence.overall_score * 100).toFixed(0)}%`
+        : "N/A";
+
+    let md = `# QueryFusion Q&A Report\n\n`;
+    md += `**Date:** ${dateStr}\n`;
+    md += `**Question:** ${question}\n`;
+    md += `**Mode:** ${mode} (Alpha: ${alpha})\n`;
+    md += `**Composite Confidence:** ${confScore}\n\n`;
+    md += `## Answer\n\n${answer.answer}\n\n`;
+
+    if (
+      verification?.claims &&
+      verification.claims.length > 0
+    ) {
+      md += `## Citation Verification\n\n`;
+      verification.claims.forEach((c) => {
+        md += `- **[${c.verdict}]** ${c.claim_text}\n`;
+      });
+      md += `\n`;
+    }
+
+    if (answer?.citations && answer.citations.length > 0) {
+      md += `## Cited Evidence Sources\n\n`;
+      answer.citations.forEach((cit) => {
+        md += `### Citation [${cit.citation_id}]\n`;
+        md += `- **Chunk ID:** \`${cit.chunk_id || "N/A"}\`\n`;
+        if (cit.evidence_quote) {
+          md += `> ${cit.evidence_quote}\n\n`;
+        }
+      });
+    }
+
+    const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `queryfusion_answer_${Date.now()}.md`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportJSON = () => {
+    const payload = {
+      question,
+      timestamp: new Date().toISOString(),
+      mode,
+      alpha,
+      answer,
+      verification,
+      confidence,
+      completed: sse.completed,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `queryfusion_trace_${Date.now()}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
 
   const resolveCitation = (
     rawToken: string,
@@ -668,12 +749,51 @@ export default function QA() {
 
       {/* Answer */}
       {answer?.answer && (
-        <div className="bg-[var(--color-bg-secondary)] rounded-xl p-6 border border-[var(--color-border)] space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="font-semibold text-lg">Answer</h3>
-            {confidence?.overall_score != null && (
-              <ConfidenceBadge score={confidence.overall_score} />
-            )}
+        <div className="bg-[var(--color-bg-secondary)] rounded-xl p-6 border border-[var(--color-border)] space-y-4 shadow-xs">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <h3 className="font-semibold text-lg text-[var(--color-text)]">
+                Answer
+              </h3>
+              {confidence?.overall_score != null && (
+                <ConfidenceBadge score={confidence.overall_score} />
+              )}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleCopyAnswer}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors cursor-pointer border border-[var(--color-border)]"
+                title="Copy Answer to clipboard"
+              >
+                {copied ? (
+                  <Check size={14} className="text-[var(--color-success)]" />
+                ) : (
+                  <Copy size={14} />
+                )}
+                <span>{copied ? "Copied!" : "Copy"}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleExportMarkdown}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors cursor-pointer border border-[var(--color-border)]"
+                title="Export Q&A Report as Markdown"
+              >
+                <Download size={14} />
+                <span>Export MD</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleExportJSON}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors cursor-pointer border border-[var(--color-border)]"
+                title="Export Execution Trace as JSON"
+              >
+                <span className="font-mono text-[11px] font-bold">JSON</span>
+              </button>
+            </div>
           </div>
           <div className="prose prose-sm max-w-none text-[var(--color-text)]">
             {renderAnswer(answer.answer)}
@@ -711,28 +831,55 @@ export default function QA() {
             </div>
           )}
 
-          {/* Timing */}
-          {sse.completed && (
-            <div className="flex gap-4 text-xs text-[var(--color-text-tertiary)] pt-2">
-              <span>
-                Retrieval:{" "}
-                {(sse.completed as Record<string, number>).retrieval_ms?.toFixed(
-                  0,
+          {/* Latency Telemetry Breakdown */}
+          {sse.completed && (() => {
+            const completed = sse.completed as {
+              retrieval_ms?: number;
+              generation_ms?: number;
+              total_ms?: number;
+              stages?: Record<string, number>;
+              cached?: boolean;
+              model?: string;
+            };
+            const total =
+              completed.total_ms ??
+              Math.round(
+                (completed.retrieval_ms ?? 0) + (completed.generation_ms ?? 0),
+              );
+
+            return (
+              <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-[var(--color-border)] text-xs">
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[var(--color-primary)]/10 text-[var(--color-primary)] font-medium">
+                  <Zap size={13} className="text-amber-500 fill-amber-500" />
+                  <span>{total} ms total</span>
+                  {completed.cached && (
+                    <span className="ml-1 text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-600 font-semibold uppercase">
+                      Cached
+                    </span>
+                  )}
+                </div>
+
+                {completed.stages && Object.keys(completed.stages).length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5 text-[var(--color-text-secondary)]">
+                    {Object.entries(completed.stages).map(([stage, ms]) => (
+                      <span
+                        key={stage}
+                        className="px-2 py-0.5 rounded-md bg-[var(--color-bg-tertiary)] text-[11px] font-mono"
+                      >
+                        {stage}: {ms}ms
+                      </span>
+                    ))}
+                  </div>
                 )}
-                ms
-              </span>
-              <span>
-                Generation:{" "}
-                {(
-                  sse.completed as Record<string, number>
-                ).generation_ms?.toFixed(0)}
-                ms
-              </span>
-              <span>
-                Model: {(sse.completed as Record<string, string>).model}
-              </span>
-            </div>
-          )}
+
+                {completed.generation_ms != null && (
+                  <span className="text-[11px] text-[var(--color-text-tertiary)] ml-auto font-mono">
+                    LLM: {completed.generation_ms.toFixed(0)}ms ({completed.model || "Gemini"})
+                  </span>
+                )}
+              </div>
+            );
+          })()}
         </div>
       )}
 

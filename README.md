@@ -68,6 +68,12 @@ Built with a **FastAPI** backend, **PostgreSQL (`pgvector`)**, and a **React + V
 * Real-time tracking of PostgreSQL corpus footprint and available quota.
 * Client-side pre-flight checks block oversized uploads before server transmission, preventing out-of-memory spikes.
 
+### 6. Interactive Developer Experience & Telemetry
+* **One-Click Demo Dataset:** Instant seeding of curated sample documents for rapid evaluation without manual file hunting.
+* **Stage-by-Stage Latency Telemetry:** Real-time millisecond breakdown across embedding, dense, sparse, fusion, reranking, and generation stages.
+* **Export & Sharing Tools:** One-click clipboard copying, full Markdown report export with cited evidence blocks, and structured JSON telemetry export.
+* **Theme Customization:** Seamless Light and Dark mode switching with persistent user preference storage.
+
 ### 6. Built-in Evaluation & Diagnostics
 * **Retrieval Diagnostics:** 4-column inspection tracking candidate rank progression across Dense, BM25, RRF, and Rerank stages.
 * **Automated Metrics:** Precision@K, Recall@K, MRR, NDCG@K, RAGAS Faithfulness, and per-stage latency percentiles (p50, p90, p95).

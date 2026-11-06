@@ -159,6 +159,23 @@ export function fetchStorageStats(): Promise<StorageStats> {
   return request("/api/v1/documents/storage");
 }
 
+export interface DemoLoadResult {
+  status: string;
+  loaded_count: number;
+  existing_count: number;
+  created_documents: Array<{
+    document_id: string;
+    filename: string;
+    chunks_created: number;
+    chunking_strategy: string;
+  }>;
+  already_existing: string[];
+}
+
+export function loadDemoDocuments(): Promise<DemoLoadResult> {
+  return request("/api/v1/documents/demo", { method: "POST" });
+}
+
 export function deleteDocument(id: string): Promise<void> {
   return request(`/api/v1/documents/${id}`, { method: "DELETE" });
 }

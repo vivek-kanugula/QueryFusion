@@ -111,6 +111,62 @@ def upload_document(
     }
 
 
+@router.post("/demo")
+def load_demo_documents(db: Session = Depends(get_db)):
+    """Seed pre-packaged demonstration documents for quick testing."""
+    from hybrid_rag.data.sample_documents import DEMO_DOCUMENTS
+
+    created_docs: list[dict[str, object]] = []
+    already_existing: list[str] = []
+
+    for item in DEMO_DOCUMENTS:
+        filename = str(item["filename"])
+        content_str = str(item["content"])
+        strategy = str(item["chunking_strategy"])
+        raw_bytes = content_str.encode("utf-8")
+        parsed = parse_file(raw_bytes, filename)
+
+        existing = db.query(Document).filter(
+            (Document.filename == filename) | (Document.file_hash == parsed.content_hash)
+        ).first()
+
+        if existing:
+            already_existing.append(filename)
+            continue
+
+        doc = Document(
+            filename=parsed.filename,
+            file_type=parsed.file_type,
+            file_hash=parsed.content_hash,
+            size_bytes=parsed.size_bytes,
+            chunking_strategy=strategy,
+            is_evictable=True,
+        )
+
+        chunker = CHUNKERS.get(strategy, chunk_fixed)
+        if strategy == "structure" and parsed.sections:
+            section_dicts = [{"text": s.text, "heading": s.heading} for s in parsed.sections]
+            chunks = chunker(parsed.full_text, sections=section_dicts)
+        else:
+            chunks = chunker(parsed.full_text)
+
+        db_chunks = index_document(db, doc, chunks, strategy)
+        created_docs.append({
+            "document_id": str(doc.id),
+            "filename": doc.filename,
+            "chunks_created": len(db_chunks),
+            "chunking_strategy": strategy,
+        })
+
+    return {
+        "status": "success",
+        "loaded_count": len(created_docs),
+        "existing_count": len(already_existing),
+        "created_documents": created_docs,
+        "already_existing": already_existing,
+    }
+
+
 @router.get("")
 def list_documents(db: Session = Depends(get_db)):
     docs = db.query(Document).order_by(Document.created_at.desc()).all()

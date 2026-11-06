@@ -131,6 +131,11 @@ async def stream_query(request: QueryRequest, db: Session = Depends(get_db)):
             if gen_response.confidence:
                 yield _sse_event("confidence", (gen_response.confidence.model_dump()))
 
+            stage_durations = {
+                s.stage: round(s.duration_ms, 1) for s in retrieval_trace.stages
+            }
+            total_elapsed = round(retrieval_ms + gen_ms, 1)
+
             yield _sse_event(
                 "completed",
                 {
@@ -139,6 +144,8 @@ async def stream_query(request: QueryRequest, db: Session = Depends(get_db)):
                     "cached": gen_response.cached,
                     "retrieval_ms": round(retrieval_ms, 1),
                     "generation_ms": round(gen_ms, 1),
+                    "total_ms": total_elapsed,
+                    "stages": stage_durations,
                 },
             )
 

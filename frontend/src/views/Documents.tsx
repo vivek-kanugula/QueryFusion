@@ -8,6 +8,7 @@ import {
   FileText,
   HardDrive,
   MessageSquare,
+  Sparkles,
   Trash2,
   Upload,
   X,
@@ -21,6 +22,7 @@ import {
   fetchDocumentChunks,
   fetchDocuments,
   fetchStorageStats,
+  loadDemoDocuments,
   uploadDocument,
   type Chunk,
   type Document,
@@ -112,6 +114,25 @@ export default function Documents() {
     },
   });
 
+  const [demoBanner, setDemoBanner] = useState<string | null>(null);
+
+  const demoMut = useMutation({
+    mutationFn: loadDemoDocuments,
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ["documents"] });
+      qc.invalidateQueries({ queryKey: ["storage"] });
+      if (res.loaded_count > 0) {
+        setDemoBanner(`Loaded ${res.loaded_count} sample documents for quick testing!`);
+      } else {
+        setDemoBanner("Sample documents are already present in the database.");
+      }
+      setTimeout(() => setDemoBanner(null), 5000);
+    },
+    onError: (err) => {
+      setClientError(parseApiError(err));
+    },
+  });
+
   const onDrop = useCallback(
     (files: File[]) => {
       setClientError(null);
@@ -189,10 +210,25 @@ export default function Documents() {
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-semibold">Documents</h2>
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-[var(--color-text-tertiary)] flex items-center gap-1.5">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-semibold">Documents</h2>
+          <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
+            Manage, chunk, and index source materials into PostgreSQL pgvector
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => demoMut.mutate()}
+            disabled={demoMut.isPending}
+            className="inline-flex items-center gap-2 px-3.5 py-2 text-xs font-medium rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-tertiary)] text-[var(--color-text)] transition-colors shadow-xs disabled:opacity-50 cursor-pointer"
+            title="Pre-seed sample technical documents for quick testing"
+          >
+            <Sparkles size={14} className="text-[var(--color-primary)]" />
+            {demoMut.isPending ? "Loading Samples..." : "Load Sample Docs"}
+          </button>
+          <span className="text-xs text-[var(--color-text-tertiary)] flex items-center gap-1.5 pl-3 border-l border-[var(--color-border)]">
             <span
               className={`w-2 h-2 rounded-full ${
                 storageUsagePct >= 85
@@ -208,6 +244,14 @@ export default function Documents() {
           </span>
         </div>
       </div>
+
+      {/* Demo Banner */}
+      {demoBanner && (
+        <div className="flex items-center gap-2.5 p-3.5 bg-[var(--color-primary)]/10 text-[var(--color-primary)] border border-[var(--color-primary)]/20 rounded-xl text-xs font-medium animate-fadeIn">
+          <Sparkles size={16} className="shrink-0" />
+          <span>{demoBanner}</span>
+        </div>
+      )}
 
       {/* Real-Time Storage & Database Health Monitor */}
       <div className="bg-[var(--color-bg-secondary)] rounded-2xl p-5 border border-[var(--color-border)] shadow-xs space-y-4">

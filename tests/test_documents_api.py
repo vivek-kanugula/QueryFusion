@@ -226,3 +226,47 @@ def test_get_storage_stats_populated():
     assert data["document_count"] == 3
     assert data["chunk_count"] == 150
 
+
+def test_load_demo_documents_success():
+    """Verify POST /api/v1/documents/demo seeds sample documents when database is empty."""
+    mock_session = MagicMock()
+    mock_session.query.return_value.filter.return_value.first.return_value = None
+
+    app.dependency_overrides[get_db] = _override_db(mock_session)
+    try:
+        with patch("hybrid_rag.api.documents.index_document") as mock_index:
+            mock_index.return_value = [MagicMock(), MagicMock()]
+            response = client.post("/api/v1/documents/demo")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "success"
+    assert data["loaded_count"] == 3
+    assert len(data["created_documents"]) == 3
+    assert data["existing_count"] == 0
+
+
+def test_load_demo_documents_already_present():
+    """Verify POST /api/v1/documents/demo handles already-seeded documents gracefully."""
+    mock_session = MagicMock()
+    existing_doc = MagicMock()
+    existing_doc.id = uuid.uuid4()
+    mock_session.query.return_value.filter.return_value.first.return_value = existing_doc
+
+    app.dependency_overrides[get_db] = _override_db(mock_session)
+    try:
+        with patch("hybrid_rag.api.documents.index_document") as mock_index:
+            response = client.post("/api/v1/documents/demo")
+            assert mock_index.call_count == 0
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "success"
+    assert data["loaded_count"] == 0
+    assert data["existing_count"] == 3
+
+
