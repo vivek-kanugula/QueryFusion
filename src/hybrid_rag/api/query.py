@@ -29,6 +29,9 @@ class QueryRequest(BaseModel):
     verify: bool = True
     temperature: float = 0.0
     document_ids: list[str] | None = None
+    chat_history: list[dict[str, str]] | None = None
+    model: str | None = None
+    provider: str | None = None
 
 
 def _sse_event(event: str, data: dict) -> str:
@@ -54,6 +57,19 @@ async def stream_query(request: QueryRequest, db: Session = Depends(get_db)):
 
         yield _sse_event("stage", {"name": "started", "trace_id": trace.trace_id})
 
+        search_query = request.question
+        if request.chat_history:
+            from hybrid_rag.generation.contextualizer import contextualize_query
+
+            yield _sse_event("stage", {"name": "contextualize"})
+            search_query = await asyncio.to_thread(
+                contextualize_query,
+                request.question,
+                request.chat_history,
+                model=request.model,
+                provider=request.provider,
+            )
+
         try:
             from hybrid_rag.retrieval.bm25_store import get_bm25_store
             from hybrid_rag.retrieval.retriever import full_retrieve
@@ -66,7 +82,7 @@ async def stream_query(request: QueryRequest, db: Session = Depends(get_db)):
             bm25 = get_bm25_store()
             retrieval_trace = await asyncio.to_thread(
                 full_retrieve,
-                request.question,
+                search_query,
                 config,
                 bm25,
                 db=db,
@@ -98,6 +114,9 @@ async def stream_query(request: QueryRequest, db: Session = Depends(get_db)):
                 generate_grounded_answer,
                 request.question,
                 retrieval_trace,
+                chat_history=request.chat_history,
+                model=request.model,
+                provider=request.provider,
                 verify=request.verify,
                 temperature=request.temperature,
             )
@@ -146,6 +165,9 @@ async def stream_query(request: QueryRequest, db: Session = Depends(get_db)):
                     "generation_ms": round(gen_ms, 1),
                     "total_ms": total_elapsed,
                     "stages": stage_durations,
+                    "contextualized_query": (
+                        search_query if search_query != request.question else None
+                    ),
                 },
             )
 

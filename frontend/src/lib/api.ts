@@ -272,6 +272,9 @@ export interface StreamQueryOptions {
   chunking_strategy?: string;
   temperature?: number;
   document_ids?: string[];
+  chat_history?: Array<{ role: string; content: string }>;
+  model?: string;
+  provider?: string;
 }
 
 export function streamQuery(

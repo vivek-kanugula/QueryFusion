@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-3.5-flash-lite"
 
+    # Additional Providers (Groq & Local Ollama)
+    groq_api_key: str | None = None
+    ollama_host: str = "http://localhost:11434"
+
     # Embedding & reranking
     embedding_model: str = "BAAI/bge-small-en-v1.5"
     reranker_model: str = "Xenova/ms-marco-MiniLM-L-6-v2"

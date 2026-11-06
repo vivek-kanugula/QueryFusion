@@ -20,9 +20,11 @@ def _get_final_candidates(trace: QueryTrace) -> list[CandidateResult]:
 def generate_grounded_answer(
     query: str,
     trace: QueryTrace,
+    chat_history: list[dict[str, str]] | None = None,
     llm_cache: LLMCache | None = None,
     rate_limiter: TokenBucketRateLimiter | None = None,
     model: str | None = None,
+    provider: str | None = None,
     temperature: float = 0.0,
     verify: bool = True,
 ) -> GenerationResponse:
@@ -32,9 +34,11 @@ def generate_grounded_answer(
     answer, cached = generate_answer(
         question=query,
         candidates=candidates,
+        chat_history=chat_history,
         llm_cache=llm_cache,
         rate_limiter=rate_limiter,
         model=model_name,
+        provider=provider,
         temperature=temperature,
     )
 
@@ -46,6 +50,7 @@ def generate_grounded_answer(
             llm_cache=llm_cache,
             rate_limiter=rate_limiter,
             model=model_name,
+            provider=provider,
             temperature=temperature,
         )
 

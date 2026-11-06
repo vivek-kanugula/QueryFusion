@@ -45,7 +45,7 @@ using ONLY the provided context passages. Follow these rules strictly:
 and explain why in fallback_reason.
 4. Do NOT fabricate information. Only use evidence from the provided context.
 5. Quote brief evidence from the context in each citation's evidence_quote field.
-
+{history_section}
 Context passages:
 {context}
 
@@ -87,22 +87,71 @@ def build_citation_map(candidates: list[CandidateResult]) -> dict[str, Candidate
     return {f"[C{i}]": c for i, c in enumerate(candidates, 1)}
 
 
-def build_generation_prompt(question: str, candidates: list[CandidateResult]) -> str:
+def format_conversation_history(chat_history: list[dict[str, str]] | None) -> str:
+    if not chat_history:
+        return ""
+    lines = []
+    for msg in chat_history[-6:]:
+        role = msg.get("role", "user").capitalize()
+        content = escape_delimiter_tags(msg.get("content", "").strip())
+        lines.append(f"{role}: {content}")
+    formatted = "\n".join(lines)
+    return (
+        f"\nConversation History:\n"
+        f"<conversation_history>\n{formatted}\n</conversation_history>\n"
+    )
+
+
+def build_generation_prompt(
+    question: str,
+    candidates: list[CandidateResult],
+    chat_history: list[dict[str, str]] | None = None,
+) -> str:
     context = format_context(candidates)
     escaped_question = escape_delimiter_tags(question)
-    return GENERATION_PROMPT_TEMPLATE.format(context=context, question=escaped_question)
+    history_section = format_conversation_history(chat_history)
+    return GENERATION_PROMPT_TEMPLATE.format(
+        history_section=history_section,
+        context=context,
+        question=escaped_question,
+    )
 
 
 def _schema_json() -> str:
     return json.dumps(GroundedAnswer.model_json_schema(), sort_keys=True)
 
 
+def _dispatch_generation(
+    model_name: str,
+    prompt: str,
+    temperature: float,
+    provider: str | None = None,
+) -> str:
+    from hybrid_rag.generation.llm_client import resolve_provider
+
+    resolved_provider, clean_model = resolve_provider(model_name, provider)
+    if resolved_provider == "gemini":
+        return _call_gemini(clean_model, prompt, temperature)
+
+    from hybrid_rag.generation.llm_client import call_llm
+
+    return call_llm(
+        prompt=prompt,
+        system_instruction=GENERATION_SYSTEM_INSTRUCTION,
+        model=clean_model,
+        provider=resolved_provider,
+        temperature=temperature,
+    )
+
+
 def generate_answer(
     question: str,
     candidates: list[CandidateResult],
+    chat_history: list[dict[str, str]] | None = None,
     llm_cache: LLMCache | None = None,
     rate_limiter: TokenBucketRateLimiter | None = None,
     model: str | None = None,
+    provider: str | None = None,
     temperature: float = 0.0,
 ) -> tuple[GroundedAnswer, bool]:
     """Generate grounded answer. Returns (answer, was_cached)."""
@@ -110,9 +159,10 @@ def generate_answer(
         return _fallback_answer("No context passages were retrieved for this question."), False
 
     model_name = model or settings.gemini_model
-    prompt = build_generation_prompt(question, candidates)
+    prompt = build_generation_prompt(question, candidates, chat_history=chat_history)
     schema_json = _schema_json()
-    key = cache_key(model_name, prompt, schema_json, temperature)
+    cache_model_tag = f"{provider}:{model_name}" if provider else model_name
+    key = cache_key(cache_model_tag, prompt, schema_json, temperature)
 
     if llm_cache is not None:
         cached = llm_cache.get(key)
@@ -123,13 +173,13 @@ def generate_answer(
         rate_limiter.acquire()
 
     raw_response = retry_with_backoff(
-        lambda: _call_gemini(model_name, prompt, temperature),
+        lambda: _dispatch_generation(model_name, prompt, temperature, provider=provider),
     )
 
     answer = _parse_response(raw_response, candidates)
 
     if llm_cache is not None:
-        llm_cache.put(key, answer.model_dump_json(), model_name)
+        llm_cache.put(key, answer.model_dump_json(), cache_model_tag)
 
     return answer, False
 

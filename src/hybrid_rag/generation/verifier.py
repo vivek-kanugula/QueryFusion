@@ -105,12 +105,36 @@ def build_verification_prompt(answer: GroundedAnswer, candidates: list[Candidate
     )
 
 
+def _dispatch_verification(
+    model_name: str,
+    prompt: str,
+    temperature: float,
+    provider: str | None = None,
+) -> str:
+    from hybrid_rag.generation.llm_client import resolve_provider
+
+    resolved_provider, clean_model = resolve_provider(model_name, provider)
+    if resolved_provider == "gemini":
+        return _call_gemini_verification(clean_model, prompt, temperature)
+
+    from hybrid_rag.generation.llm_client import call_llm
+
+    return call_llm(
+        prompt=prompt,
+        system_instruction=VERIFICATION_SYSTEM_INSTRUCTION,
+        model=clean_model,
+        provider=resolved_provider,
+        temperature=temperature,
+    )
+
+
 def verify_citations(
     answer: GroundedAnswer,
     candidates: list[CandidateResult],
     llm_cache: LLMCache | None = None,
     rate_limiter: TokenBucketRateLimiter | None = None,
     model: str | None = None,
+    provider: str | None = None,
     temperature: float = 0.0,
 ) -> VerificationResult:
     if not answer.has_sufficient_context or not answer.citations:
@@ -123,7 +147,8 @@ def verify_citations(
     model_name = model or settings.gemini_model
     prompt = build_verification_prompt(answer, candidates)
     schema_json = "verification_claims_array"
-    key = cache_key(model_name, prompt, schema_json, temperature)
+    cache_model_tag = f"{provider}:{model_name}" if provider else model_name
+    key = cache_key(cache_model_tag, prompt, schema_json, temperature)
 
     if llm_cache is not None:
         cached = llm_cache.get(key)
@@ -134,13 +159,13 @@ def verify_citations(
         rate_limiter.acquire()
 
     raw = retry_with_backoff(
-        lambda: _call_gemini_verification(model_name, prompt, temperature),
+        lambda: _dispatch_verification(model_name, prompt, temperature, provider=provider),
     )
 
     result = _parse_verification(raw)
 
     if llm_cache is not None:
-        llm_cache.put(key, json.dumps([c.model_dump() for c in result.claims]), model_name)
+        llm_cache.put(key, json.dumps([c.model_dump() for c in result.claims]), cache_model_tag)
 
     return result
 
