@@ -364,3 +364,86 @@ def hydrate_candidates(candidates: list[CandidateResult], db: Session) -> None:
                 candidate.content = chunk.content
             if not candidate.metadata.get("document_id") and chunk.document_id:
                 candidate.metadata["document_id"] = str(chunk.document_id)
+
+
+def multi_query_retrieve(
+    queries: list[str],
+    config: PipelineConfig,
+    bm25_store: Bm25Store | None = None,
+    db: Session | None = None,
+) -> QueryTrace:
+    """Retrieve and fuse candidates across multiple expanded query variations."""
+    if not queries:
+        return QueryTrace(query="", config=config)
+
+    if len(queries) == 1:
+        return full_retrieve(queries[0], config, bm25_store=bm25_store, db=db)
+
+    primary_query = queries[0]
+    traces: list[QueryTrace] = []
+    for q in queries:
+        traces.append(hybrid_retrieve(q, config, db=db, bm25_store=bm25_store))
+
+    rrf_k = config.rrf_k
+    scores: dict[str, float] = {}
+    candidate_map: dict[str, CandidateResult] = {}
+
+    for trace in traces:
+        final_candidates = trace.stages[-1].candidates if trace.stages else []
+        for rank, c in enumerate(final_candidates, 1):
+            scores[c.chunk_id] = scores.get(c.chunk_id, 0.0) + (1.0 / (rrf_k + rank))
+            if c.chunk_id not in candidate_map or c.content:
+                candidate_map[c.chunk_id] = c
+
+    sorted_chunk_ids = sorted(scores.keys(), key=lambda cid: scores[cid], reverse=True)
+    fused_candidates: list[CandidateResult] = []
+    for rank, cid in enumerate(sorted_chunk_ids[: config.fusion_top_k], 1):
+        orig = candidate_map[cid]
+        fused_candidates.append(
+            CandidateResult(
+                chunk_id=cid,
+                score=scores[cid],
+                rank=rank,
+                content=orig.content,
+                metadata={
+                    **orig.metadata,
+                    "multi_query_fused": True,
+                },
+            )
+        )
+
+    if db is not None:
+        hydrate_candidates(fused_candidates, db)
+
+    if config.document_ids:
+        allowed = {str(d) for d in config.document_ids}
+        fused_candidates = [
+            c for c in fused_candidates if c.metadata.get("document_id") in allowed
+        ]
+
+    merged_trace = QueryTrace(
+        query=primary_query,
+        config=config,
+    )
+
+    merged_trace.add_stage(
+        StageTrace(
+            stage="multi_query_rrf",
+            candidates=fused_candidates,
+            duration_ms=sum(t.total_duration_ms for t in traces),
+            metadata={"expanded_queries": queries},
+        )
+    )
+
+    if config.rerank_enabled and fused_candidates:
+        from hybrid_rag.retrieval.reranker import rerank_candidates
+
+        rerank_stage = rerank_candidates(
+            query=primary_query,
+            candidates=fused_candidates,
+            top_k=config.rerank_top_k,
+            apply_lost_in_middle=config.lost_in_middle,
+        )
+        merged_trace.add_stage(rerank_stage)
+
+    return merged_trace

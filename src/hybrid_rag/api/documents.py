@@ -224,6 +224,73 @@ def get_storage_stats(db: Session = Depends(get_db)):
     }
 
 
+@router.get("/chunks/{chunk_id}/context")
+def get_chunk_context(
+    chunk_id: uuid.UUID,
+    db: Session = Depends(get_db),
+):
+    """Retrieve detailed context for a chunk including document metadata and adjacent chunks."""
+    target_chunk = db.get(DocumentChunk, chunk_id)
+    if target_chunk is None:
+        target_chunk = db.query(DocumentChunk).filter(DocumentChunk.id == chunk_id).first()
+
+    if target_chunk is None:
+        raise HTTPException(404, f"Chunk {chunk_id} not found")
+
+    doc = db.get(Document, target_chunk.document_id)
+    if doc is None:
+        doc = db.query(Document).filter(Document.id == target_chunk.document_id).first()
+
+    total_chunks = (
+        db.query(DocumentChunk)
+        .filter(DocumentChunk.document_id == target_chunk.document_id)
+        .count()
+    )
+
+    prev_chunk = (
+        db.query(DocumentChunk)
+        .filter(
+            DocumentChunk.document_id == target_chunk.document_id,
+            DocumentChunk.chunk_index == target_chunk.chunk_index - 1,
+        )
+        .first()
+    )
+
+    next_chunk = (
+        db.query(DocumentChunk)
+        .filter(
+            DocumentChunk.document_id == target_chunk.document_id,
+            DocumentChunk.chunk_index == target_chunk.chunk_index + 1,
+        )
+        .first()
+    )
+
+    def _format_chunk(c: DocumentChunk | None) -> dict[str, object] | None:
+        if c is None:
+            return None
+        return {
+            "chunk_id": str(c.id),
+            "index": c.chunk_index,
+            "token_count": c.token_count,
+            "content": c.content,
+            "section_heading": c.section_heading or "",
+        }
+
+    return {
+        "document": {
+            "id": str(doc.id) if doc else str(target_chunk.document_id),
+            "filename": doc.filename if doc else "Unknown",
+            "file_type": doc.file_type if doc else "text",
+            "chunking_strategy": doc.chunking_strategy if doc else "fixed",
+            "size_bytes": doc.size_bytes if doc else 0,
+            "total_chunks": total_chunks,
+        },
+        "target_chunk": _format_chunk(target_chunk),
+        "previous_chunk": _format_chunk(prev_chunk),
+        "next_chunk": _format_chunk(next_chunk),
+    }
+
+
 @router.get("/{document_id}/chunks")
 def list_document_chunks(
     document_id: uuid.UUID,

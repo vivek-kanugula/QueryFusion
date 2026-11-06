@@ -32,6 +32,8 @@ class QueryRequest(BaseModel):
     chat_history: list[dict[str, str]] | None = None
     model: str | None = None
     provider: str | None = None
+    query_expansion: bool = False
+    enable_crag: bool = True
 
 
 def _sse_event(event: str, data: dict) -> str:
@@ -70,9 +72,21 @@ async def stream_query(request: QueryRequest, db: Session = Depends(get_db)):
                 provider=request.provider,
             )
 
+        expanded_queries = [search_query]
+        if request.query_expansion:
+            from hybrid_rag.retrieval.expansion import expand_query
+
+            yield _sse_event("stage", {"name": "expansion"})
+            expanded_queries = await asyncio.to_thread(
+                expand_query,
+                search_query,
+                model=request.model,
+                provider=request.provider,
+            )
+
         try:
             from hybrid_rag.retrieval.bm25_store import get_bm25_store
-            from hybrid_rag.retrieval.retriever import full_retrieve
+            from hybrid_rag.retrieval.retriever import full_retrieve, multi_query_retrieve
 
             yield _sse_event("stage", {"name": "dense"})
             yield _sse_event("stage", {"name": "sparse"})
@@ -80,13 +94,22 @@ async def stream_query(request: QueryRequest, db: Session = Depends(get_db)):
 
             start = time.perf_counter()
             bm25 = get_bm25_store()
-            retrieval_trace = await asyncio.to_thread(
-                full_retrieve,
-                search_query,
-                config,
-                bm25,
-                db=db,
-            )
+            if len(expanded_queries) > 1:
+                retrieval_trace = await asyncio.to_thread(
+                    multi_query_retrieve,
+                    expanded_queries,
+                    config,
+                    bm25,
+                    db=db,
+                )
+            else:
+                retrieval_trace = await asyncio.to_thread(
+                    full_retrieve,
+                    search_query,
+                    config,
+                    bm25,
+                    db=db,
+                )
             retrieval_ms = (time.perf_counter() - start) * 1000
 
             if config.rerank_enabled:
@@ -120,10 +143,38 @@ async def stream_query(request: QueryRequest, db: Session = Depends(get_db)):
                 verify=request.verify,
                 temperature=request.temperature,
             )
-            gen_ms = (time.perf_counter() - start) * 1000
 
             if request.verify:
                 yield _sse_event("stage", {"name": "verification"})
+
+            if request.enable_crag:
+                from hybrid_rag.generation.crag import (
+                    execute_corrective_fallback,
+                    should_trigger_crag,
+                )
+
+                needs_crag, crag_reason = should_trigger_crag(gen_response, min_confidence=0.5)
+                if needs_crag:
+                    yield _sse_event(
+                        "stage",
+                        {"name": "corrective_fallback", "reason": crag_reason},
+                    )
+                    gen_response = await asyncio.to_thread(
+                        execute_corrective_fallback,
+                        search_query,
+                        retrieval_trace,
+                        gen_response,
+                        crag_reason,
+                        config,
+                        bm25_store=bm25,
+                        db=db,
+                        chat_history=request.chat_history,
+                        model=request.model,
+                        provider=request.provider,
+                        temperature=request.temperature,
+                    )
+
+            gen_ms = (time.perf_counter() - start) * 1000
 
             trace_store.save(retrieval_trace)
 
@@ -168,6 +219,11 @@ async def stream_query(request: QueryRequest, db: Session = Depends(get_db)):
                     "contextualized_query": (
                         search_query if search_query != request.question else None
                     ),
+                    "expanded_queries": (
+                        expanded_queries if len(expanded_queries) > 1 else None
+                    ),
+                    "was_corrected": gen_response.was_corrected,
+                    "correction_reason": gen_response.correction_reason,
                 },
             )
 

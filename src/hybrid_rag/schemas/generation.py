@@ -57,3 +57,5 @@ class GenerationResponse(BaseModel):
     trace_id: str = ""
     model: str = ""
     cached: bool = False
+    was_corrected: bool = False
+    correction_reason: str | None = None

@@ -5,16 +5,20 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Copy,
   Cpu,
   Download,
   FileText,
   Filter,
+  Layers,
   Loader2,
   MessageSquare,
   RotateCcw,
   Search,
   Shield,
+  ShieldCheck,
   Sparkles,
   User,
   X,
@@ -23,7 +27,12 @@ import {
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { useLocation } from "react-router-dom";
-import { fetchDocuments, type Document } from "../lib/api";
+import {
+  fetchChunkContext,
+  fetchDocuments,
+  type ChunkContextResponse,
+  type Document,
+} from "../lib/api";
 import { useSSEQuery } from "../hooks/useSSEQuery";
 
 const MODES = [
@@ -103,12 +112,14 @@ const AVAILABLE_MODELS: ModelOption[] = [
 
 const STAGE_ORDER = [
   "contextualize",
+  "expansion",
   "dense",
   "sparse",
   "rrf",
   "rerank",
   "generation",
   "verification",
+  "corrective_fallback",
 ];
 
 export interface ChatMessage {
@@ -117,6 +128,9 @@ export interface ChatMessage {
   content: string;
   timestamp: string;
   contextualizedQuery?: string;
+  expandedQueries?: string[];
+  wasCorrected?: boolean;
+  correctionReason?: string;
   citations?: Array<{
     citation_id: string;
     chunk_id: string;
@@ -147,6 +161,9 @@ export interface ChatMessage {
     cached?: boolean;
     model?: string;
     contextualized_query?: string | null;
+    expanded_queries?: string[] | null;
+    was_corrected?: boolean;
+    correction_reason?: string | null;
   };
   has_sufficient_context?: boolean;
   fallback_reason?: string;
@@ -160,6 +177,7 @@ interface PersistedQASession {
   selectedDocIds: string[];
   selectedModel?: string;
   selectedProvider?: string;
+  queryExpansion?: boolean;
   messages: ChatMessage[];
   stages?: string[];
   answer?: Record<string, unknown> | null;
@@ -284,6 +302,9 @@ export default function QA() {
   const [question, setQuestion] = useState("");
   const [mode, setMode] = useState<string>(() => savedSession?.mode ?? "hybrid_rerank");
   const [alpha, setAlpha] = useState<number>(() => savedSession?.alpha ?? 0.5);
+  const [queryExpansion, setQueryExpansion] = useState<boolean>(
+    () => savedSession?.queryExpansion ?? false,
+  );
   const [selectedDocIds, setSelectedDocIds] = useState<string[]>(() => {
     if (locationState?.selectedDocIds && locationState.selectedDocIds.length > 0) {
       return locationState.selectedDocIds;
@@ -306,12 +327,17 @@ export default function QA() {
 
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  const [inspectChunk, setInspectChunk] = useState<{
-    content: string;
-    quote: string;
-    citation_id?: string;
+  // Side-by-Side Split-Screen Citation Inspector State
+  const [inspectCitation, setInspectCitation] = useState<{
+    citation_id: string;
+    chunk_id: string;
     document_id?: string;
+    evidence_quote: string;
   } | null>(null);
+
+  const [citationContextData, setCitationContextData] = useState<ChunkContextResponse | null>(null);
+  const [citationLoading, setCitationLoading] = useState(false);
+  const [activeInspectorTab, setActiveInspectorTab] = useState<"target" | "adjacent">("target");
 
   const { data: docs = [] } = useQuery({
     queryKey: ["documents"],
@@ -320,6 +346,33 @@ export default function QA() {
 
   const sse = useSSEQuery();
   const lastTraceAppendedRef = useRef<string | null>(null);
+
+  // Fetch adjacent chunk context when a citation is selected
+  useEffect(() => {
+    const chunkId = inspectCitation?.chunk_id;
+    if (!chunkId) {
+      return;
+    }
+
+    let isMounted = true;
+    fetchChunkContext(chunkId)
+      .then((data) => {
+        if (isMounted) {
+          setCitationContextData(data);
+          setCitationLoading(false);
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setCitationContextData(null);
+          setCitationLoading(false);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [inspectCitation?.chunk_id]);
 
   // Close dropdowns on outside click
   useEffect(() => {
@@ -375,6 +428,13 @@ export default function QA() {
       contextualizedQuery:
         (completedData as { contextualized_query?: string | null })?.contextualized_query ||
         undefined,
+      expandedQueries:
+        (completedData as { expanded_queries?: string[] | null })?.expanded_queries ||
+        undefined,
+      wasCorrected: (completedData as { was_corrected?: boolean })?.was_corrected,
+      correctionReason:
+        (completedData as { correction_reason?: string | null })?.correction_reason ||
+        undefined,
       citations: answerData?.citations || [],
       verification: sse.verification as ChatMessage["verification"],
       confidence: sse.confidence as ChatMessage["confidence"],
@@ -404,6 +464,7 @@ export default function QA() {
         question,
         mode,
         alpha,
+        queryExpansion,
         selectedDocIds,
         selectedModel,
         selectedProvider,
@@ -415,6 +476,7 @@ export default function QA() {
     question,
     mode,
     alpha,
+    queryExpansion,
     selectedDocIds,
     selectedModel,
     selectedProvider,
@@ -460,7 +522,7 @@ export default function QA() {
     setMessages(nextMessages);
     setQuestion("");
 
-    // Send conversation turns for multi-turn contextualization
+    // Build chat history for conversational contextualization
     const chatHistory = messages.map((m) => ({
       role: m.role,
       content: m.content,
@@ -475,12 +537,16 @@ export default function QA() {
       chat_history: chatHistory.length > 0 ? chatHistory : undefined,
       model: selectedModel,
       provider: selectedProvider,
+      query_expansion: queryExpansion,
+      enable_crag: true,
     });
   };
 
   const handleResetSession = () => {
     setQuestion("");
     setMessages([]);
+    setInspectCitation(null);
+    setCitationContextData(null);
     sse.reset();
     saveSessionState(null);
   };
@@ -499,7 +565,9 @@ export default function QA() {
     let md = `# QueryFusion Multi-Turn Q&A Session\n\n`;
     md += `**Date:** ${new Date().toISOString()}\n`;
     md += `**Model:** ${activeModel.name} (${activeModel.provider})\n`;
-    md += `**Retrieval Mode:** ${mode} (Alpha: ${alpha})\n\n---\n\n`;
+    md += `**Retrieval Mode:** ${mode} (Alpha: ${alpha})\n`;
+    if (queryExpansion) md += `**Query Expansion (HyDE):** Enabled\n`;
+    md += `\n---\n\n`;
 
     targetMessages.forEach((m, idx) => {
       const speaker = m.role === "user" ? "### User" : `### Assistant (${activeModel.name})`;
@@ -507,6 +575,12 @@ export default function QA() {
 
       if (m.contextualizedQuery) {
         md += `> **Reformulated Search Query:** ${m.contextualizedQuery}\n\n`;
+      }
+      if (m.expandedQueries && m.expandedQueries.length > 1) {
+        md += `> **Expanded Queries:** ${m.expandedQueries.join(", ")}\n\n`;
+      }
+      if (m.wasCorrected) {
+        md += `> **Self-Correction (CRAG):** ${m.correctionReason || "Applied"}\n\n`;
       }
 
       if (m.verification?.claims && m.verification.claims.length > 0) {
@@ -544,6 +618,7 @@ export default function QA() {
       model: activeModel,
       mode,
       alpha,
+      queryExpansion,
       timestamp: new Date().toISOString(),
       messages,
     };
@@ -659,12 +734,15 @@ export default function QA() {
                   type="button"
                   onClick={() => {
                     if (citation) {
-                      setInspectChunk({
-                        content: citation.chunk_id,
-                        quote: citation.evidence_quote || "",
+                      setCitationContextData(null);
+                      setCitationLoading(true);
+                      setInspectCitation({
                         citation_id: citation.citation_id,
+                        chunk_id: citation.chunk_id,
                         document_id: citation.document_id,
+                        evidence_quote: citation.evidence_quote || "",
                       });
+                      setActiveInspectorTab("target");
                     }
                   }}
                   title={
@@ -699,607 +777,845 @@ export default function QA() {
   };
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <MessageSquare className="text-[var(--color-primary)]" size={22} />
-          <div>
-            <h2 className="text-xl font-semibold">Conversational Q&A</h2>
-            <p className="text-xs text-[var(--color-text-tertiary)]">
-              Multi-turn dialog with automatic query contextualization & grounded citations
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {messages.length > 0 && (
-            <>
-              <button
-                type="button"
-                onClick={() => handleExportMarkdown()}
-                className="text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text)] px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-bg-secondary)] transition-colors flex items-center gap-1.5 cursor-pointer"
-                title="Export conversation as Markdown"
-              >
-                <Download size={13} />
-                <span>Export Chat</span>
-              </button>
-              <button
-                type="button"
-                onClick={handleExportJSON}
-                className="text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text)] px-2 py-1.5 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-bg-secondary)] transition-colors flex items-center cursor-pointer font-mono font-semibold"
-                title="Export conversation as JSON"
-              >
-                JSON
-              </button>
-              <button
-                type="button"
-                onClick={handleResetSession}
-                className="text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-danger)] px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-bg-secondary)] transition-colors flex items-center gap-1.5 cursor-pointer"
-                title="Clear conversation and reset memory"
-              >
-                <RotateCcw size={13} />
-                <span>New Chat</span>
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Control Bar: Retrieval Mode, Model Selector & Document Scope */}
-      <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl">
-        {/* Retrieval Strategy Selector */}
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-xs font-medium text-[var(--color-text-tertiary)] mr-1">
-            Search:
-          </span>
-          {MODES.map((m) => (
-            <button
-              key={m.value}
-              type="button"
-              onClick={() => setMode(m.value)}
-              className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${
-                mode === m.value
-                  ? "bg-[var(--color-primary)] text-white border-[var(--color-primary)] font-medium"
-                  : "border-[var(--color-border)] hover:border-[var(--color-border-hover)] text-[var(--color-text-secondary)]"
-              }`}
-            >
-              {m.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex items-center gap-2">
-          {/* Model Provider Selector Dropdown */}
-          <div className="relative" ref={modelDropdownRef}>
-            <button
-              type="button"
-              onClick={() => setModelDropdownOpen((prev) => !prev)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] hover:border-[var(--color-border-hover)] text-[var(--color-text)] transition-colors cursor-pointer"
-              title="Select LLM generation model and provider"
-            >
-              <Cpu size={13} className="text-[var(--color-primary)]" />
-              <span>{activeModel.name}</span>
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-primary)]/10 text-[var(--color-primary)] uppercase font-semibold">
-                {activeModel.badge}
-              </span>
-              <ChevronDown size={12} className="text-[var(--color-text-tertiary)]" />
-            </button>
-
-            {modelDropdownOpen && (
-              <div className="absolute right-0 mt-1 w-80 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-xl shadow-xl z-30 p-2 text-xs space-y-2">
-                <div className="px-2 py-1 text-[11px] font-semibold text-[var(--color-text-tertiary)] uppercase tracking-wider border-b border-[var(--color-border)] pb-1.5">
-                  LLM Provider & Model
-                </div>
-
-                <div className="max-h-72 overflow-y-auto space-y-1">
-                  {(["Google Gemini", "Groq Cloud", "Local Ollama"] as const).map((groupName) => {
-                    const groupModels = AVAILABLE_MODELS.filter((m) => m.group === groupName);
-                    return (
-                      <div key={groupName} className="space-y-0.5">
-                        <div className="px-2 pt-1.5 pb-0.5 text-[10px] font-bold text-[var(--color-text-tertiary)] uppercase">
-                          {groupName}
-                        </div>
-                        {groupModels.map((m) => {
-                          const isSelected = selectedModel === m.id;
-                          return (
-                            <button
-                              key={m.id}
-                              type="button"
-                              onClick={() => {
-                                setSelectedModel(m.id);
-                                setSelectedProvider(m.provider);
-                                setModelDropdownOpen(false);
-                              }}
-                              className={`w-full text-left px-2 py-1.5 rounded-lg flex items-start justify-between gap-2 transition-colors cursor-pointer ${
-                                isSelected
-                                  ? "bg-[var(--color-primary)]/10 text-[var(--color-primary)] font-medium"
-                                  : "hover:bg-[var(--color-bg-secondary)] text-[var(--color-text)]"
-                              }`}
-                            >
-                              <div className="flex-1 truncate">
-                                <div className="flex items-center gap-1.5">
-                                  <span>{m.name}</span>
-                                  <span className="text-[9px] px-1 py-0.2 rounded bg-[var(--color-bg-tertiary)] text-[var(--color-text-tertiary)] uppercase font-semibold">
-                                    {m.badge}
-                                  </span>
-                                </div>
-                                <div className="text-[10px] text-[var(--color-text-tertiary)] truncate">
-                                  {m.description}
-                                </div>
-                              </div>
-                              {isSelected && <Check size={14} className="shrink-0 mt-0.5" />}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    );
-                  })}
-                </div>
+    <div className="relative min-h-[calc(100vh-80px)] flex">
+      {/* Main Chat View Container (dynamically accommodates the side drawer) */}
+      <div
+        className={`flex-1 transition-all duration-300 ${
+          inspectCitation ? "lg:mr-[440px]" : ""
+        }`}
+      >
+        <div className="max-w-4xl mx-auto space-y-6">
+          {/* Header */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <MessageSquare className="text-[var(--color-primary)]" size={22} />
+              <div>
+                <h2 className="text-xl font-semibold">Conversational Q&A</h2>
+                <p className="text-xs text-[var(--color-text-tertiary)]">
+                  Hybrid RAG with multi-query expansion, CRAG self-correction, & citation inspection
+                </p>
               </div>
-            )}
+            </div>
+
+            <div className="flex items-center gap-2">
+              {messages.length > 0 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => handleExportMarkdown()}
+                    className="text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text)] px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-bg-secondary)] transition-colors flex items-center gap-1.5 cursor-pointer"
+                    title="Export conversation as Markdown"
+                  >
+                    <Download size={13} />
+                    <span>Export Chat</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleExportJSON}
+                    className="text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text)] px-2 py-1.5 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-bg-secondary)] transition-colors flex items-center cursor-pointer font-mono font-semibold"
+                    title="Export conversation as JSON"
+                  >
+                    JSON
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleResetSession}
+                    className="text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-danger)] px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-bg-secondary)] transition-colors flex items-center gap-1.5 cursor-pointer"
+                    title="Clear conversation and reset memory"
+                  >
+                    <RotateCcw size={13} />
+                    <span>New Chat</span>
+                  </button>
+                </>
+              )}
+            </div>
           </div>
 
-          {/* Document Scope Dropdown */}
-          {docs.length > 0 && (
-            <div className="relative" ref={dropdownRef}>
+          {/* Control Bar: Retrieval Mode, Model Selector, Query Expansion, & Document Scope */}
+          <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl">
+            {/* Retrieval Strategy Selector */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-xs font-medium text-[var(--color-text-tertiary)] mr-1">
+                Search:
+              </span>
+              {MODES.map((m) => (
+                <button
+                  key={m.value}
+                  type="button"
+                  onClick={() => setMode(m.value)}
+                  className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${
+                    mode === m.value
+                      ? "bg-[var(--color-primary)] text-white border-[var(--color-primary)] font-medium"
+                      : "border-[var(--color-border)] hover:border-[var(--color-border-hover)] text-[var(--color-text-secondary)]"
+                  }`}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Query Expansion (HyDE) Toggle */}
               <button
                 type="button"
-                onClick={() => setDropdownOpen((prev) => !prev)}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
-                  selectedDocIds.length > 0
-                    ? "bg-[var(--color-primary)]/10 text-[var(--color-primary)] border-[var(--color-primary)]/30 hover:bg-[var(--color-primary)]/20"
+                onClick={() => setQueryExpansion((prev) => !prev)}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors cursor-pointer ${
+                  queryExpansion
+                    ? "bg-[var(--color-primary)] text-white border-[var(--color-primary)] shadow-xs"
                     : "bg-[var(--color-bg)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-hover)]"
                 }`}
+                title="Generate alternate query variations and a hypothetical passage (HyDE) to maximize retrieval recall"
               >
-                <Filter size={13} />
-                <span>
-                  {selectedDocIds.length === 0
-                    ? `Scope: All (${docs.length})`
-                    : `Scope: ${selectedDocIds.length}`}
+                <Sparkles
+                  size={13}
+                  className={queryExpansion ? "text-amber-300 fill-amber-300" : ""}
+                />
+                <span>HyDE Expansion</span>
+                <span
+                  className={`text-[9px] px-1 py-0.2 rounded font-semibold uppercase ${
+                    queryExpansion
+                      ? "bg-white/20 text-white"
+                      : "bg-[var(--color-bg-tertiary)] text-[var(--color-text-tertiary)]"
+                  }`}
+                >
+                  {queryExpansion ? "ON" : "OFF"}
                 </span>
-                <ChevronDown size={12} />
               </button>
 
-              {dropdownOpen && (
-                <div className="absolute right-0 mt-1 w-72 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-xl shadow-xl z-30 p-2 text-xs space-y-1">
-                  <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--color-border)] pb-2 mb-1">
-                    <span className="font-semibold text-[var(--color-text)]">
-                      Target Documents
-                    </span>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={selectAllDocs}
-                        className="text-[var(--color-primary)] hover:underline"
-                      >
-                        All
-                      </button>
-                      <span className="text-[var(--color-text-tertiary)]">|</span>
-                      <button
-                        type="button"
-                        onClick={clearDocSelection}
-                        className="text-[var(--color-text-tertiary)] hover:underline"
-                      >
-                        Reset
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="max-h-48 overflow-y-auto space-y-0.5">
-                    {docs.map((d: Document) => {
-                      const isChecked = selectedDocIds.includes(d.id);
-                      return (
-                        <label
-                          key={d.id}
-                          className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--color-bg-secondary)] cursor-pointer text-[var(--color-text)] select-none"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={isChecked}
-                            onChange={() => toggleDoc(d.id)}
-                            className="accent-[var(--color-primary)] rounded"
-                          />
-                          <span className="truncate flex-1" title={d.filename}>
-                            {d.filename}
-                          </span>
-                          <span className="text-[10px] text-[var(--color-text-tertiary)] uppercase font-mono">
-                            {d.file_type}
-                          </span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Selected Document Chips */}
-      {selectedDocIds.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-xs text-[var(--color-text-tertiary)] flex items-center gap-1">
-            <FileText size={12} />
-            Filtering by:
-          </span>
-          {selectedDocIds.map((id) => {
-            const doc = docs.find((d: Document) => d.id === id);
-            return (
-              <span
-                key={id}
-                className="inline-flex items-center gap-1 px-2 py-0.5 bg-[var(--color-primary)]/10 text-[var(--color-primary)] rounded-md text-xs font-medium"
-              >
-                <span className="max-w-[150px] truncate">
-                  {doc ? doc.filename : id.slice(0, 8)}
-                </span>
+              {/* Model Provider Selector Dropdown */}
+              <div className="relative" ref={modelDropdownRef}>
                 <button
                   type="button"
-                  onClick={() => removeDoc(id)}
-                  className="hover:opacity-75 focus:outline-none"
-                  title="Remove filter"
+                  onClick={() => setModelDropdownOpen((prev) => !prev)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] hover:border-[var(--color-border-hover)] text-[var(--color-text)] transition-colors cursor-pointer"
+                  title="Select LLM generation model and provider"
                 >
-                  <X size={12} />
-                </button>
-              </span>
-            );
-          })}
-          <button
-            type="button"
-            onClick={clearDocSelection}
-            className="text-xs text-[var(--color-text-tertiary)] hover:text-[var(--color-text)] underline ml-1"
-          >
-            Clear all
-          </button>
-        </div>
-      )}
-
-      {/* Alpha slider */}
-      {isHybrid && (
-        <div className="flex items-center gap-4 px-3 py-2 bg-[var(--color-bg-secondary)]/50 rounded-xl border border-[var(--color-border)]">
-          <label className="text-xs font-medium text-[var(--color-text-secondary)] w-28">
-            Alpha: {alpha.toFixed(2)}
-          </label>
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.05}
-            value={alpha}
-            onChange={(e) => setAlpha(+e.target.value)}
-            className="flex-1 accent-[var(--color-primary)]"
-          />
-          <span className="text-xs text-[var(--color-text-tertiary)] w-28 text-right font-mono">
-            Dense ← → BM25
-          </span>
-        </div>
-      )}
-
-      {/* Conversation Thread */}
-      <div className="space-y-4 min-h-[160px]">
-        {messages.length === 0 && !sse.isStreaming && (
-          <div className="text-center py-12 px-4 rounded-2xl border border-dashed border-[var(--color-border)] bg-[var(--color-bg-secondary)]/30 space-y-3">
-            <div className="w-12 h-12 rounded-full bg-[var(--color-primary)]/10 text-[var(--color-primary)] flex items-center justify-center mx-auto">
-              <Sparkles size={24} />
-            </div>
-            <h3 className="font-semibold text-[var(--color-text)]">
-              Ask anything about your ingested documents
-            </h3>
-            <p className="text-xs text-[var(--color-text-secondary)] max-w-md mx-auto">
-              QueryFusion uses Hybrid Dense + Sparse BM25 retrieval, Cross-Encoder reranking,
-              and citation verification with conversation memory for intelligent follow-ups.
-            </p>
-          </div>
-        )}
-
-        {messages.map((m) => (
-          <div
-            key={m.id}
-            className={`flex flex-col ${
-              m.role === "user" ? "items-end" : "items-start"
-            }`}
-          >
-            {/* Speaker Label */}
-            <div className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-tertiary)] mb-1 px-1">
-              {m.role === "user" ? (
-                <>
-                  <span>You</span>
-                  <User size={12} />
-                  <span>• {m.timestamp}</span>
-                </>
-              ) : (
-                <>
-                  <Bot size={13} className="text-[var(--color-primary)]" />
-                  <span className="font-medium text-[var(--color-text)]">Assistant</span>
-                  <span>• {m.completed?.model || activeModel.name}</span>
-                  <span>• {m.timestamp}</span>
-                </>
-              )}
-            </div>
-
-            {/* Bubble Content */}
-            <div
-              className={`max-w-[85%] rounded-2xl p-4 text-sm shadow-xs ${
-                m.role === "user"
-                  ? "bg-[var(--color-primary)] text-white rounded-tr-xs"
-                  : "bg-[var(--color-bg-secondary)] text-[var(--color-text)] border border-[var(--color-border)] rounded-tl-xs space-y-3"
-              }`}
-            >
-              {/* Contextualized Query Tag if rewritten */}
-              {m.contextualizedQuery && (
-                <div className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-md bg-[var(--color-primary)]/10 text-[var(--color-primary)] font-mono">
-                  <Search size={11} />
-                  <span>Contextualized search: &ldquo;{m.contextualizedQuery}&rdquo;</span>
-                </div>
-              )}
-
-              {/* Insufficient context warning */}
-              {m.has_sufficient_context === false && (
-                <div className="flex items-center gap-2 p-2.5 bg-[var(--color-warning)]/10 text-[var(--color-warning)] rounded-lg text-xs">
-                  <AlertCircle size={15} />
-                  <span>
-                    Insufficient context.{" "}
-                    {m.fallback_reason && <span>{m.fallback_reason}</span>}
+                  <Cpu size={13} className="text-[var(--color-primary)]" />
+                  <span>{activeModel.name}</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-primary)]/10 text-[var(--color-primary)] uppercase font-semibold">
+                    {activeModel.badge}
                   </span>
-                </div>
-              )}
+                  <ChevronDown size={12} className="text-[var(--color-text-tertiary)]" />
+                </button>
 
-              {/* Main message text */}
-              {m.role === "user" ? (
-                <div className="whitespace-pre-wrap">{m.content}</div>
-              ) : (
-                <div className="prose prose-sm max-w-none text-[var(--color-text)]">
-                  {renderAnswer(m.content, m.citations)}
-                </div>
-              )}
-
-              {/* Verification Claims if Assistant */}
-              {m.role === "assistant" &&
-                m.verification?.claims &&
-                m.verification.claims.length > 0 && (
-                  <div className="pt-2 border-t border-[var(--color-border)] space-y-1.5">
-                    <div className="flex items-center justify-between text-[11px] font-semibold text-[var(--color-text-tertiary)] uppercase">
-                      <span>Citation Verification</span>
-                      {m.confidence?.overall_score != null && (
-                        <ConfidenceBadge score={m.confidence.overall_score} />
-                      )}
+                {modelDropdownOpen && (
+                  <div className="absolute right-0 mt-1 w-80 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-xl shadow-xl z-30 p-2 text-xs space-y-2">
+                    <div className="px-2 py-1 text-[11px] font-semibold text-[var(--color-text-tertiary)] uppercase tracking-wider border-b border-[var(--color-border)] pb-1.5">
+                      LLM Provider & Model
                     </div>
-                    <div className="space-y-1">
-                      {m.verification.claims.map((c, i) => (
-                        <div key={i} className="flex items-start gap-2 text-xs">
-                          <span
-                            className={`shrink-0 px-1.5 py-0.5 rounded font-mono font-semibold text-[10px] ${
-                              c.verdict === "SUPPORTED"
-                                ? "bg-[var(--color-success)]/10 text-[var(--color-success)]"
-                                : c.verdict === "UNSUPPORTED"
-                                  ? "bg-[var(--color-danger)]/10 text-[var(--color-danger)]"
-                                  : "bg-[var(--color-warning)]/10 text-[var(--color-warning)]"
-                            }`}
-                          >
-                            {c.verdict}
-                          </span>
-                          <span className="text-[var(--color-text-secondary)] text-[12px]">
-                            {c.claim_text}
-                          </span>
-                        </div>
-                      ))}
+
+                    <div className="max-h-72 overflow-y-auto space-y-1">
+                      {(["Google Gemini", "Groq Cloud", "Local Ollama"] as const).map(
+                        (groupName) => {
+                          const groupModels = AVAILABLE_MODELS.filter(
+                            (m) => m.group === groupName,
+                          );
+                          return (
+                            <div key={groupName} className="space-y-0.5">
+                              <div className="px-2 pt-1.5 pb-0.5 text-[10px] font-bold text-[var(--color-text-tertiary)] uppercase">
+                                {groupName}
+                              </div>
+                              {groupModels.map((m) => {
+                                const isSelected = selectedModel === m.id;
+                                return (
+                                  <button
+                                    key={m.id}
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedModel(m.id);
+                                      setSelectedProvider(m.provider);
+                                      setModelDropdownOpen(false);
+                                    }}
+                                    className={`w-full text-left px-2 py-1.5 rounded-lg flex items-start justify-between gap-2 transition-colors cursor-pointer ${
+                                      isSelected
+                                        ? "bg-[var(--color-primary)]/10 text-[var(--color-primary)] font-medium"
+                                        : "hover:bg-[var(--color-bg-secondary)] text-[var(--color-text)]"
+                                    }`}
+                                  >
+                                    <div className="flex-1 truncate">
+                                      <div className="flex items-center gap-1.5">
+                                        <span>{m.name}</span>
+                                        <span className="text-[9px] px-1 py-0.2 rounded bg-[var(--color-bg-tertiary)] text-[var(--color-text-tertiary)] uppercase font-semibold">
+                                          {m.badge}
+                                        </span>
+                                      </div>
+                                      <div className="text-[10px] text-[var(--color-text-tertiary)] truncate">
+                                        {m.description}
+                                      </div>
+                                    </div>
+                                    {isSelected && <Check size={14} className="shrink-0 mt-0.5" />}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          );
+                        },
+                      )}
                     </div>
                   </div>
                 )}
+              </div>
 
-              {/* Telemetry pill & Actions for Assistant */}
-              {m.role === "assistant" && (
-                <div className="pt-2 border-t border-[var(--color-border)] flex flex-wrap items-center justify-between gap-2 text-xs">
-                  {m.completed && (
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[var(--color-primary)]/10 text-[var(--color-primary)] text-[11px] font-medium">
-                        <Zap size={12} className="text-amber-500 fill-amber-500" />
-                        <span>
-                          {m.completed.total_ms ??
-                            Math.round(
-                              (m.completed.retrieval_ms ?? 0) +
-                                (m.completed.generation_ms ?? 0),
-                            )}{" "}
-                          ms
+              {/* Document Scope Dropdown */}
+              {docs.length > 0 && (
+                <div className="relative" ref={dropdownRef}>
+                  <button
+                    type="button"
+                    onClick={() => setDropdownOpen((prev) => !prev)}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
+                      selectedDocIds.length > 0
+                        ? "bg-[var(--color-primary)]/10 text-[var(--color-primary)] border-[var(--color-primary)]/30 hover:bg-[var(--color-primary)]/20"
+                        : "bg-[var(--color-bg)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-hover)]"
+                    }`}
+                  >
+                    <Filter size={13} />
+                    <span>
+                      {selectedDocIds.length === 0
+                        ? `Scope: All (${docs.length})`
+                        : `Scope: ${selectedDocIds.length}`}
+                    </span>
+                    <ChevronDown size={12} />
+                  </button>
+
+                  {dropdownOpen && (
+                    <div className="absolute right-0 mt-1 w-72 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-xl shadow-xl z-30 p-2 text-xs space-y-1">
+                      <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--color-border)] pb-2 mb-1">
+                        <span className="font-semibold text-[var(--color-text)]">
+                          Target Documents
                         </span>
-                        {m.completed.cached && (
-                          <span className="ml-1 text-[9px] px-1 py-0.2 rounded bg-emerald-500/10 text-emerald-600 font-semibold uppercase">
-                            Cached
-                          </span>
-                        )}
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={selectAllDocs}
+                            className="text-[var(--color-primary)] hover:underline"
+                          >
+                            All
+                          </button>
+                          <span className="text-[var(--color-text-tertiary)]">|</span>
+                          <button
+                            type="button"
+                            onClick={clearDocSelection}
+                            className="text-[var(--color-text-tertiary)] hover:underline"
+                          >
+                            Reset
+                          </button>
+                        </div>
                       </div>
 
-                      {m.completed.stages &&
-                        Object.keys(m.completed.stages).length > 0 && (
-                          <div className="hidden sm:flex flex-wrap items-center gap-1 text-[var(--color-text-secondary)]">
-                            {Object.entries(m.completed.stages).map(([stg, ms]) => (
-                              <span
-                                key={stg}
-                                className="px-1.5 py-0.5 rounded bg-[var(--color-bg-tertiary)] text-[10px] font-mono"
-                              >
-                                {stg}: {ms}ms
+                      <div className="max-h-48 overflow-y-auto space-y-0.5">
+                        {docs.map((d: Document) => {
+                          const isChecked = selectedDocIds.includes(d.id);
+                          return (
+                            <label
+                              key={d.id}
+                              className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--color-bg-secondary)] cursor-pointer text-[var(--color-text)] select-none"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={() => toggleDoc(d.id)}
+                                className="accent-[var(--color-primary)] rounded"
+                              />
+                              <span className="truncate flex-1" title={d.filename}>
+                                {d.filename}
                               </span>
-                            ))}
-                          </div>
-                        )}
+                              <span className="text-[10px] text-[var(--color-text-tertiary)] uppercase font-mono">
+                                {d.file_type}
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Selected Document Chips */}
+          {selectedDocIds.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-xs text-[var(--color-text-tertiary)] flex items-center gap-1">
+                <FileText size={12} />
+                Filtering by:
+              </span>
+              {selectedDocIds.map((id) => {
+                const doc = docs.find((d: Document) => d.id === id);
+                return (
+                  <span
+                    key={id}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 bg-[var(--color-primary)]/10 text-[var(--color-primary)] rounded-md text-xs font-medium"
+                  >
+                    <span className="max-w-[150px] truncate">
+                      {doc ? doc.filename : id.slice(0, 8)}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => removeDoc(id)}
+                      className="hover:opacity-75 focus:outline-none"
+                      title="Remove filter"
+                    >
+                      <X size={12} />
+                    </button>
+                  </span>
+                );
+              })}
+              <button
+                type="button"
+                onClick={clearDocSelection}
+                className="text-xs text-[var(--color-text-tertiary)] hover:text-[var(--color-text)] underline ml-1"
+              >
+                Clear all
+              </button>
+            </div>
+          )}
+
+          {/* Alpha slider */}
+          {isHybrid && (
+            <div className="flex items-center gap-4 px-3 py-2 bg-[var(--color-bg-secondary)]/50 rounded-xl border border-[var(--color-border)]">
+              <label className="text-xs font-medium text-[var(--color-text-secondary)] w-28">
+                Alpha: {alpha.toFixed(2)}
+              </label>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={alpha}
+                onChange={(e) => setAlpha(+e.target.value)}
+                className="flex-1 accent-[var(--color-primary)]"
+              />
+              <span className="text-xs text-[var(--color-text-tertiary)] w-28 text-right font-mono">
+                Dense ← → BM25
+              </span>
+            </div>
+          )}
+
+          {/* Conversation Thread */}
+          <div className="space-y-4 min-h-[160px]">
+            {messages.length === 0 && !sse.isStreaming && (
+              <div className="text-center py-12 px-4 rounded-2xl border border-dashed border-[var(--color-border)] bg-[var(--color-bg-secondary)]/30 space-y-3">
+                <div className="w-12 h-12 rounded-full bg-[var(--color-primary)]/10 text-[var(--color-primary)] flex items-center justify-center mx-auto">
+                  <Sparkles size={24} />
+                </div>
+                <h3 className="font-semibold text-[var(--color-text)]">
+                  Ask anything about your ingested documents
+                </h3>
+                <p className="text-xs text-[var(--color-text-secondary)] max-w-md mx-auto">
+                  QueryFusion uses Hybrid Dense + Sparse BM25 retrieval, Cross-Encoder reranking,
+                  HyDE query expansion, and Corrective RAG (CRAG) self-healing.
+                </p>
+              </div>
+            )}
+
+            {messages.map((m) => (
+              <div
+                key={m.id}
+                className={`flex flex-col ${
+                  m.role === "user" ? "items-end" : "items-start"
+                }`}
+              >
+                {/* Speaker Label */}
+                <div className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-tertiary)] mb-1 px-1">
+                  {m.role === "user" ? (
+                    <>
+                      <span>You</span>
+                      <User size={12} />
+                      <span>• {m.timestamp}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Bot size={13} className="text-[var(--color-primary)]" />
+                      <span className="font-medium text-[var(--color-text)]">Assistant</span>
+                      <span>• {m.completed?.model || activeModel.name}</span>
+                      <span>• {m.timestamp}</span>
+                    </>
+                  )}
+                </div>
+
+                {/* Bubble Content */}
+                <div
+                  className={`max-w-[85%] rounded-2xl p-4 text-sm shadow-xs ${
+                    m.role === "user"
+                      ? "bg-[var(--color-primary)] text-white rounded-tr-xs"
+                      : "bg-[var(--color-bg-secondary)] text-[var(--color-text)] border border-[var(--color-border)] rounded-tl-xs space-y-3"
+                  }`}
+                >
+                  {/* Contextualized Query Tag */}
+                  {m.contextualizedQuery && (
+                    <div className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-md bg-[var(--color-primary)]/10 text-[var(--color-primary)] font-mono">
+                      <Search size={11} />
+                      <span>Contextualized search: &ldquo;{m.contextualizedQuery}&rdquo;</span>
                     </div>
                   )}
 
-                  <div className="flex items-center gap-1.5 ml-auto">
-                    <button
-                      type="button"
-                      onClick={() => handleCopy(m.id, m.content)}
-                      className="p-1 text-[var(--color-text-tertiary)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] rounded transition-colors"
-                      title="Copy answer"
-                    >
-                      {copiedId === m.id ? (
-                        <Check size={13} className="text-[var(--color-success)]" />
-                      ) : (
-                        <Copy size={13} />
+                  {/* Multi-Query Expanded Tags */}
+                  {m.expandedQueries && m.expandedQueries.length > 1 && (
+                    <div className="flex flex-wrap items-center gap-1 text-[10px] px-2.5 py-1 rounded-md bg-amber-500/10 text-amber-700 dark:text-amber-300">
+                      <Sparkles size={11} className="text-amber-500 shrink-0" />
+                      <span className="font-semibold">HyDE Expansions:</span>
+                      {m.expandedQueries.slice(1).map((eq, i) => (
+                        <span
+                          key={i}
+                          className="px-1.5 py-0.2 rounded bg-amber-500/20 font-mono truncate max-w-[200px]"
+                          title={eq}
+                        >
+                          {eq}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* CRAG Self-Correction Banner */}
+                  {m.wasCorrected && (
+                    <div className="flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-md bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20">
+                      <ShieldCheck size={13} className="text-emerald-500 shrink-0" />
+                      <span>
+                        Self-Corrected via CRAG:{" "}
+                        <span className="font-medium italic">
+                          {m.correctionReason || "Re-retrieved with broadened scope"}
+                        </span>
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Insufficient context warning */}
+                  {m.has_sufficient_context === false && (
+                    <div className="flex items-center gap-2 p-2.5 bg-[var(--color-warning)]/10 text-[var(--color-warning)] rounded-lg text-xs">
+                      <AlertCircle size={15} />
+                      <span>
+                        Insufficient context.{" "}
+                        {m.fallback_reason && <span>{m.fallback_reason}</span>}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Main message text */}
+                  {m.role === "user" ? (
+                    <div className="whitespace-pre-wrap">{m.content}</div>
+                  ) : (
+                    <div className="prose prose-sm max-w-none text-[var(--color-text)]">
+                      {renderAnswer(m.content, m.citations)}
+                    </div>
+                  )}
+
+                  {/* Verification Claims if Assistant */}
+                  {m.role === "assistant" &&
+                    m.verification?.claims &&
+                    m.verification.claims.length > 0 && (
+                      <div className="pt-2 border-t border-[var(--color-border)] space-y-1.5">
+                        <div className="flex items-center justify-between text-[11px] font-semibold text-[var(--color-text-tertiary)] uppercase">
+                          <span>Citation Verification</span>
+                          {m.confidence?.overall_score != null && (
+                            <ConfidenceBadge score={m.confidence.overall_score} />
+                          )}
+                        </div>
+                        <div className="space-y-1">
+                          {m.verification.claims.map((c, i) => (
+                            <div key={i} className="flex items-start gap-2 text-xs">
+                              <span
+                                className={`shrink-0 px-1.5 py-0.5 rounded font-mono font-semibold text-[10px] ${
+                                  c.verdict === "SUPPORTED"
+                                    ? "bg-[var(--color-success)]/10 text-[var(--color-success)]"
+                                    : c.verdict === "UNSUPPORTED"
+                                      ? "bg-[var(--color-danger)]/10 text-[var(--color-danger)]"
+                                      : "bg-[var(--color-warning)]/10 text-[var(--color-warning)]"
+                                }`}
+                              >
+                                {c.verdict}
+                              </span>
+                              <span className="text-[var(--color-text-secondary)] text-[12px]">
+                                {c.claim_text}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                  {/* Telemetry pill & Actions for Assistant */}
+                  {m.role === "assistant" && (
+                    <div className="pt-2 border-t border-[var(--color-border)] flex flex-wrap items-center justify-between gap-2 text-xs">
+                      {m.completed && (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[var(--color-primary)]/10 text-[var(--color-primary)] text-[11px] font-medium">
+                            <Zap size={12} className="text-amber-500 fill-amber-500" />
+                            <span>
+                              {m.completed.total_ms ??
+                                Math.round(
+                                  (m.completed.retrieval_ms ?? 0) +
+                                    (m.completed.generation_ms ?? 0),
+                                )}{" "}
+                              ms
+                            </span>
+                            {m.completed.cached && (
+                              <span className="ml-1 text-[9px] px-1 py-0.2 rounded bg-emerald-500/10 text-emerald-600 font-semibold uppercase">
+                                Cached
+                              </span>
+                            )}
+                          </div>
+
+                          {m.completed.stages &&
+                            Object.keys(m.completed.stages).length > 0 && (
+                              <div className="hidden sm:flex flex-wrap items-center gap-1 text-[var(--color-text-secondary)]">
+                                {Object.entries(m.completed.stages).map(([stg, ms]) => (
+                                  <span
+                                    key={stg}
+                                    className="px-1.5 py-0.5 rounded bg-[var(--color-bg-tertiary)] text-[10px] font-mono"
+                                  >
+                                    {stg}: {ms}ms
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                        </div>
                       )}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleExportMarkdown(m)}
-                      className="p-1 text-[var(--color-text-tertiary)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] rounded transition-colors"
-                      title="Export this response as Markdown"
-                    >
-                      <Download size={13} />
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        ))}
 
-        {/* Live Streaming Assistant State */}
-        {sse.isStreaming && (
-          <div className="flex flex-col items-start space-y-2">
-            <div className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-tertiary)] px-1">
-              <Bot size={13} className="text-[var(--color-primary)] animate-pulse" />
-              <span className="font-medium text-[var(--color-text)]">
-                Assistant is thinking ({activeModel.name})...
-              </span>
-            </div>
-
-            <div className="w-full max-w-[85%] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-2xl rounded-tl-xs p-4 space-y-3 shadow-xs">
-              {/* Stage Progress Badges */}
-              <div className="flex flex-wrap gap-1.5">
-                {STAGE_ORDER.map((s) => {
-                  const idx = sse.stages.indexOf(s);
-                  const nextIdx = sse.stages.indexOf(
-                    STAGE_ORDER[STAGE_ORDER.indexOf(s) + 1],
-                  );
-                  const done = idx !== -1 && (nextIdx !== -1 || !sse.isStreaming);
-                  const active = idx !== -1 && !done;
-                  if (idx === -1 && !sse.stages.includes(s)) {
-                    if (s === "contextualize" && messages.length === 0) return null;
-                    if (s === "rerank" && !selectedMode.rerank) return null;
-                    if (s === "sparse" && mode === "dense") return null;
-                    if (s === "rrf" && mode === "dense") return null;
-                  }
-                  return <StageBadge key={s} name={s} active={active} done={done} />;
-                })}
-              </div>
-
-              {/* Streaming Partial Answer */}
-              {sse.answer && (sse.answer as { answer?: string }).answer ? (
-                <div className="prose prose-sm max-w-none text-[var(--color-text)]">
-                  {renderAnswer(
-                    (sse.answer as { answer: string }).answer,
-                    (sse.answer as { citations?: ChatMessage["citations"] }).citations,
+                      <div className="flex items-center gap-1.5 ml-auto">
+                        <button
+                          type="button"
+                          onClick={() => handleCopy(m.id, m.content)}
+                          className="p-1 text-[var(--color-text-tertiary)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] rounded transition-colors"
+                          title="Copy answer"
+                        >
+                          {copiedId === m.id ? (
+                            <Check size={13} className="text-[var(--color-success)]" />
+                          ) : (
+                            <Copy size={13} />
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleExportMarkdown(m)}
+                          className="p-1 text-[var(--color-text-tertiary)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] rounded transition-colors"
+                          title="Export this response as Markdown"
+                        >
+                          <Download size={13} />
+                        </button>
+                      </div>
+                    </div>
                   )}
                 </div>
-              ) : (
-                <div className="flex items-center gap-2 text-xs text-[var(--color-text-tertiary)] py-2">
-                  <Loader2 size={14} className="animate-spin text-[var(--color-primary)]" />
-                  <span>Retrieving passages & formulating response...</span>
+              </div>
+            ))}
+
+            {/* Live Streaming Assistant State */}
+            {sse.isStreaming && (
+              <div className="flex flex-col items-start space-y-2">
+                <div className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-tertiary)] px-1">
+                  <Bot size={13} className="text-[var(--color-primary)] animate-pulse" />
+                  <span className="font-medium text-[var(--color-text)]">
+                    Assistant is researching ({activeModel.name})...
+                  </span>
                 </div>
-              )}
-            </div>
-          </div>
-        )}
 
-        {/* Stream Error Display */}
-        {sse.error && !sse.isStreaming && (
-          <div className="flex items-center gap-2 p-3 bg-[var(--color-danger)]/10 text-[var(--color-danger)] rounded-xl text-xs">
-            <AlertCircle size={16} />
-            <span>{sse.error}</span>
-          </div>
-        )}
+                <div className="w-full max-w-[85%] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-2xl rounded-tl-xs p-4 space-y-3 shadow-xs">
+                  {/* Stage Progress Badges */}
+                  <div className="flex flex-wrap gap-1.5">
+                    {STAGE_ORDER.map((s) => {
+                      const idx = sse.stages.indexOf(s);
+                      const nextIdx = sse.stages.indexOf(
+                        STAGE_ORDER[STAGE_ORDER.indexOf(s) + 1],
+                      );
+                      const done = idx !== -1 && (nextIdx !== -1 || !sse.isStreaming);
+                      const active = idx !== -1 && !done;
+                      if (idx === -1 && !sse.stages.includes(s)) {
+                        if (s === "contextualize" && messages.length === 0) return null;
+                        if (s === "expansion" && !queryExpansion) return null;
+                        if (s === "corrective_fallback") return null;
+                        if (s === "rerank" && !selectedMode.rerank) return null;
+                        if (s === "sparse" && mode === "dense") return null;
+                        if (s === "rrf" && mode === "dense") return null;
+                      }
+                      return <StageBadge key={s} name={s} active={active} done={done} />;
+                    })}
+                  </div>
 
-        <div ref={messagesEndRef} />
-      </div>
-
-      {/* Input Bar Form */}
-      <form onSubmit={handleSubmit} className="sticky bottom-4 z-10 space-y-2">
-        <div className="flex gap-2 p-1.5 bg-[var(--color-bg)]/80 backdrop-blur-md rounded-2xl border border-[var(--color-border)] shadow-lg">
-          <div className="flex-1 relative flex items-center">
-            <Search
-              size={18}
-              className="absolute left-3.5 text-[var(--color-text-tertiary)]"
-            />
-            <input
-              type="text"
-              value={question}
-              onChange={(e) => setQuestion(e.target.value)}
-              placeholder={
-                messages.length > 0
-                  ? "Ask a follow-up question (context is automatically preserved)..."
-                  : "Ask a question about your documents..."
-              }
-              className="w-full pl-10 pr-4 py-2.5 bg-transparent text-sm focus:outline-none text-[var(--color-text)] placeholder:text-[var(--color-text-tertiary)]"
-            />
-          </div>
-          <button
-            type="submit"
-            disabled={sse.isStreaming || !question.trim()}
-            className="px-5 py-2.5 bg-[var(--color-primary)] text-white rounded-xl text-xs font-semibold hover:bg-[var(--color-primary-hover)] disabled:opacity-50 transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
-          >
-            {sse.isStreaming ? (
-              <>
-                <Loader2 size={14} className="animate-spin" />
-                <span>Searching</span>
-              </>
-            ) : (
-              <span>Ask</span>
+                  {/* Streaming Partial Answer */}
+                  {sse.answer && (sse.answer as { answer?: string }).answer ? (
+                    <div className="prose prose-sm max-w-none text-[var(--color-text)]">
+                      {renderAnswer(
+                        (sse.answer as { answer: string }).answer,
+                        (sse.answer as { citations?: ChatMessage["citations"] }).citations,
+                      )}
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 text-xs text-[var(--color-text-tertiary)] py-2">
+                      <Loader2 size={14} className="animate-spin text-[var(--color-primary)]" />
+                      <span>Retrieving passages & formulating response...</span>
+                    </div>
+                  )}
+                </div>
+              </div>
             )}
-          </button>
-        </div>
-      </form>
 
-      {/* Evidence Inspector Modal */}
-      {inspectChunk && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
-          <div className="bg-[var(--color-bg)] rounded-2xl p-6 w-full max-w-lg max-h-[80vh] overflow-y-auto shadow-2xl border border-[var(--color-border)] space-y-4">
-            <div className="flex items-center justify-between pb-2 border-b border-[var(--color-border)]">
-              <div className="flex items-center gap-2">
-                <Shield size={16} className="text-[var(--color-primary)]" />
-                <h3 className="font-semibold text-sm">Evidence Source Inspection</h3>
+            {/* Stream Error Display */}
+            {sse.error && !sse.isStreaming && (
+              <div className="flex items-center gap-2 p-3 bg-[var(--color-danger)]/10 text-[var(--color-danger)] rounded-xl text-xs">
+                <AlertCircle size={16} />
+                <span>{sse.error}</span>
+              </div>
+            )}
+
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* Input Bar Form */}
+          <form onSubmit={handleSubmit} className="sticky bottom-4 z-10 space-y-2">
+            <div className="flex gap-2 p-1.5 bg-[var(--color-bg)]/80 backdrop-blur-md rounded-2xl border border-[var(--color-border)] shadow-lg">
+              <div className="flex-1 relative flex items-center">
+                <Search
+                  size={18}
+                  className="absolute left-3.5 text-[var(--color-text-tertiary)]"
+                />
+                <input
+                  type="text"
+                  value={question}
+                  onChange={(e) => setQuestion(e.target.value)}
+                  placeholder={
+                    messages.length > 0
+                      ? "Ask a follow-up question (context is automatically preserved)..."
+                      : "Ask a question about your documents..."
+                  }
+                  className="w-full pl-10 pr-4 py-2.5 bg-transparent text-sm focus:outline-none text-[var(--color-text)] placeholder:text-[var(--color-text-tertiary)]"
+                />
               </div>
               <button
-                type="button"
-                onClick={() => setInspectChunk(null)}
-                className="p-1 hover:bg-[var(--color-bg-secondary)] rounded-lg text-[var(--color-text-tertiary)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
+                type="submit"
+                disabled={sse.isStreaming || !question.trim()}
+                className="px-5 py-2.5 bg-[var(--color-primary)] text-white rounded-xl text-xs font-semibold hover:bg-[var(--color-primary-hover)] disabled:opacity-50 transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
               >
-                <X size={18} />
+                {sse.isStreaming ? (
+                  <>
+                    <Loader2 size={14} className="animate-spin" />
+                    <span>Searching</span>
+                  </>
+                ) : (
+                  <span>Ask</span>
+                )}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      {/* Side-by-Side Split-Screen Citation Inspector Drawer */}
+      {inspectCitation && (
+        <aside className="fixed top-16 right-0 bottom-0 w-full sm:w-[400px] lg:w-[440px] bg-[var(--color-bg)] border-l border-[var(--color-border)] shadow-2xl z-30 flex flex-col transition-transform animate-in slide-in-from-right duration-200">
+          {/* Drawer Header */}
+          <div className="flex items-center justify-between p-4 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)]/50">
+            <div className="flex items-center gap-2">
+              <Layers size={18} className="text-[var(--color-primary)]" />
+              <div>
+                <h3 className="font-semibold text-sm text-[var(--color-text)] flex items-center gap-1.5">
+                  <span>Citation Inspector</span>
+                  <span className="px-1.5 py-0.5 rounded bg-[var(--color-primary)]/10 text-[var(--color-primary)] font-mono text-xs font-bold">
+                    {inspectCitation.citation_id}
+                  </span>
+                </h3>
+                <p className="text-[10px] text-[var(--color-text-tertiary)]">
+                  Verbatim evidence & adjacent document context
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() =>
+                  handleCopy(
+                    "inspect-chunk",
+                    citationContextData?.target_chunk?.content ||
+                      inspectCitation.evidence_quote ||
+                      inspectCitation.chunk_id,
+                  )
+                }
+                className="p-1.5 rounded-lg text-[var(--color-text-tertiary)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors cursor-pointer"
+                title="Copy chunk text"
+              >
+                {copiedId === "inspect-chunk" ? (
+                  <Check size={15} className="text-[var(--color-success)]" />
+                ) : (
+                  <Copy size={15} />
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setInspectCitation(null);
+                  setCitationContextData(null);
+                }}
+                className="p-1.5 rounded-lg text-[var(--color-text-tertiary)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors cursor-pointer"
+                title="Close drawer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+          </div>
+
+          {/* Drawer Body (Scrollable) */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-4 text-xs">
+            {/* Document Info Card */}
+            <div className="p-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] space-y-2">
+              <div className="flex items-center gap-2">
+                <FileText size={16} className="text-[var(--color-primary)] shrink-0" />
+                <span className="font-semibold text-sm truncate flex-1" title={citationContextData?.document?.filename}>
+                  {citationContextData?.document?.filename || "Source Document"}
+                </span>
+                <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-[var(--color-bg-tertiary)] text-[var(--color-text-tertiary)] font-bold">
+                  {citationContextData?.document?.file_type || "doc"}
+                </span>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 text-[11px] text-[var(--color-text-secondary)] font-mono">
+                {citationContextData?.target_chunk && (
+                  <span className="px-2 py-0.5 rounded bg-[var(--color-bg-tertiary)]">
+                    Chunk {citationContextData.target_chunk.index + 1} of{" "}
+                    {citationContextData.document.total_chunks}
+                  </span>
+                )}
+                {citationContextData?.target_chunk?.token_count != null && (
+                  <span className="px-2 py-0.5 rounded bg-[var(--color-bg-tertiary)]">
+                    {citationContextData.target_chunk.token_count} tokens
+                  </span>
+                )}
+                {citationContextData?.document?.chunking_strategy && (
+                  <span className="px-2 py-0.5 rounded bg-[var(--color-bg-tertiary)]">
+                    {citationContextData.document.chunking_strategy}
+                  </span>
+                )}
+              </div>
+
+              <div className="text-[10px] text-[var(--color-text-tertiary)] font-mono truncate">
+                ID: {inspectCitation.chunk_id}
+              </div>
+            </div>
+
+            {/* Inspector Tab Switcher */}
+            <div className="flex rounded-lg bg-[var(--color-bg-secondary)] p-1 border border-[var(--color-border)]">
+              <button
+                type="button"
+                onClick={() => setActiveInspectorTab("target")}
+                className={`flex-1 py-1.5 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
+                  activeInspectorTab === "target"
+                    ? "bg-[var(--color-bg)] text-[var(--color-text)] shadow-xs"
+                    : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
+                }`}
+              >
+                Target Evidence
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveInspectorTab("adjacent")}
+                className={`flex-1 py-1.5 rounded-md text-xs font-semibold transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${
+                  activeInspectorTab === "adjacent"
+                    ? "bg-[var(--color-bg)] text-[var(--color-text)] shadow-xs"
+                    : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
+                }`}
+              >
+                <span>Adjacent Context</span>
+                {citationLoading && <Loader2 size={11} className="animate-spin" />}
               </button>
             </div>
 
-            <div className="space-y-1.5 text-xs font-mono">
-              {inspectChunk.citation_id && (
-                <div className="text-[var(--color-primary)] font-semibold">
-                  Citation ID: {inspectChunk.citation_id}
-                </div>
-              )}
-              <div className="text-[var(--color-text-secondary)]">
-                Chunk ID: {inspectChunk.content || "N/A"}
-              </div>
-              {inspectChunk.document_id && (
-                <div className="text-[var(--color-text-tertiary)]">
-                  Document ID: {inspectChunk.document_id}
-                </div>
-              )}
-            </div>
+            {/* Tab 1: Target Evidence Quote */}
+            {activeInspectorTab === "target" && (
+              <div className="space-y-3">
+                {inspectCitation.evidence_quote ? (
+                  <div className="space-y-1">
+                    <span className="text-[11px] font-semibold text-[var(--color-text-tertiary)] uppercase tracking-wider">
+                      Cited Grounding Quote
+                    </span>
+                    <div className="p-3 rounded-lg border-l-4 border-amber-500 bg-amber-500/10 text-[var(--color-text)] leading-relaxed text-xs">
+                      &ldquo;{inspectCitation.evidence_quote}&rdquo;
+                    </div>
+                  </div>
+                ) : null}
 
-            {inspectChunk.quote ? (
-              <div className="space-y-1">
-                <div className="text-[11px] font-semibold text-[var(--color-text-tertiary)] uppercase">
-                  Verbatim Context Quote
-                </div>
-                <div className="bg-[var(--color-warning)]/10 border-l-4 border-[var(--color-warning)] p-3 rounded text-xs leading-relaxed text-[var(--color-text)]">
-                  <ReactMarkdown>{inspectChunk.quote}</ReactMarkdown>
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between text-[11px] font-semibold text-[var(--color-text-tertiary)] uppercase tracking-wider">
+                    <span>Full Chunk Content</span>
+                    {citationContextData?.target_chunk?.section_heading && (
+                      <span className="text-[10px] text-[var(--color-primary)] font-mono truncate max-w-[200px]">
+                        § {citationContextData.target_chunk.section_heading}
+                      </span>
+                    )}
+                  </div>
+                  <div className="p-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/50 leading-relaxed text-[var(--color-text)] whitespace-pre-wrap font-mono text-[11px]">
+                    {citationContextData?.target_chunk?.content ||
+                      inspectCitation.evidence_quote ||
+                      "Loading chunk content..."}
+                  </div>
                 </div>
               </div>
-            ) : (
-              <p className="text-xs text-[var(--color-text-tertiary)] italic">
-                No direct quote recorded for this citation marker.
-              </p>
+            )}
+
+            {/* Tab 2: Adjacent Chunks (Surrounding Narrative) */}
+            {activeInspectorTab === "adjacent" && (
+              <div className="space-y-4">
+                {citationLoading ? (
+                  <div className="py-8 text-center text-[var(--color-text-tertiary)] space-y-2">
+                    <Loader2 size={20} className="animate-spin mx-auto text-[var(--color-primary)]" />
+                    <p>Loading adjacent document passages...</p>
+                  </div>
+                ) : (
+                  <>
+                    {/* Previous Chunk */}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-1.5 text-[11px] font-semibold text-[var(--color-text-tertiary)] uppercase">
+                        <ChevronLeft size={13} />
+                        <span>
+                          Previous Chunk{" "}
+                          {citationContextData?.previous_chunk
+                            ? `(#${citationContextData.previous_chunk.index + 1})`
+                            : "(Beginning of Document)"}
+                        </span>
+                      </div>
+                      {citationContextData?.previous_chunk ? (
+                        <div className="p-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/30 text-[var(--color-text-secondary)] whitespace-pre-wrap font-mono text-[11px] leading-relaxed max-h-44 overflow-y-auto">
+                          {citationContextData.previous_chunk.content}
+                        </div>
+                      ) : (
+                        <p className="text-[11px] text-[var(--color-text-tertiary)] italic pl-1">
+                          No prior chunk exists. This is the opening section of the document.
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Target Chunk Focus Indicator */}
+                    <div className="p-2.5 rounded-lg border border-[var(--color-primary)]/30 bg-[var(--color-primary)]/10 text-xs text-[var(--color-primary)] font-medium flex items-center justify-between">
+                      <span>Target Cited Chunk (#{((citationContextData?.target_chunk?.index ?? 0) + 1)})</span>
+                      <span className="font-bold font-mono">ACTIVE EVIDENCE</span>
+                    </div>
+
+                    {/* Next Chunk */}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-1.5 text-[11px] font-semibold text-[var(--color-text-tertiary)] uppercase">
+                        <ChevronRight size={13} />
+                        <span>
+                          Next Chunk{" "}
+                          {citationContextData?.next_chunk
+                            ? `(#${citationContextData.next_chunk.index + 1})`
+                            : "(End of Document)"}
+                        </span>
+                      </div>
+                      {citationContextData?.next_chunk ? (
+                        <div className="p-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/30 text-[var(--color-text-secondary)] whitespace-pre-wrap font-mono text-[11px] leading-relaxed max-h-44 overflow-y-auto">
+                          {citationContextData.next_chunk.content}
+                        </div>
+                      ) : (
+                        <p className="text-[11px] text-[var(--color-text-tertiary)] italic pl-1">
+                          No subsequent chunk. This is the conclusion of the document.
+                        </p>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
             )}
           </div>
-        </div>
+        </aside>
       )}
     </div>
   );

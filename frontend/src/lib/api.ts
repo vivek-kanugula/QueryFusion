@@ -259,6 +259,32 @@ export function fetchConsistency(
   return request(`/api/v1/documents/consistency?${queryParams.toString()}`);
 }
 
+export interface ChunkContextItem {
+  chunk_id: string;
+  index: number;
+  token_count: number;
+  content: string;
+  section_heading: string;
+}
+
+export interface ChunkContextResponse {
+  document: {
+    id: string;
+    filename: string;
+    file_type: string;
+    chunking_strategy: string;
+    size_bytes: number;
+    total_chunks: number;
+  };
+  target_chunk: ChunkContextItem;
+  previous_chunk: ChunkContextItem | null;
+  next_chunk: ChunkContextItem | null;
+}
+
+export function fetchChunkContext(chunkId: string): Promise<ChunkContextResponse> {
+  return request(`/api/v1/documents/chunks/${chunkId}/context`);
+}
+
 export interface SSEEvent {
   event: string;
   data: Record<string, unknown>;
@@ -275,6 +301,8 @@ export interface StreamQueryOptions {
   chat_history?: Array<{ role: string; content: string }>;
   model?: string;
   provider?: string;
+  query_expansion?: boolean;
+  enable_crag?: boolean;
 }
 
 export function streamQuery(
