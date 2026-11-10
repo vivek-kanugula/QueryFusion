@@ -1,10 +1,10 @@
 from hybrid_rag.settings import Settings
 
 
-def test_heroku_postgres_url_normalization():
-    # Heroku legacy postgres:// URL format
-    heroku_url = "postgres://user123:secretpass@ec2-54-123.compute-1.amazonaws.com:5432/d123456"
-    settings = Settings(database_url=heroku_url)
+def test_postgres_scheme_normalization():
+    # Legacy or cloud provider postgres:// URL format normalized to postgresql+psycopg://
+    legacy_url = "postgres://user123:secretpass@ec2-54-123.compute-1.amazonaws.com:5432/d123456"
+    settings = Settings(database_url=legacy_url)
     assert settings.database_url == "postgresql+psycopg://user123:secretpass@ec2-54-123.compute-1.amazonaws.com:5432/d123456"
 
 

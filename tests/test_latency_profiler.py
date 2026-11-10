@@ -132,10 +132,10 @@ def test_profiler_total_latency():
 
 
 def test_profiler_to_dict():
-    profiler = LatencyProfiler(environment="heroku")
+    profiler = LatencyProfiler(environment="hf-spaces")
     profiler.record("generation", 100.0)
     d = profiler.to_dict()
-    assert d["environment"] == "heroku"
+    assert d["environment"] == "hf-spaces"
     assert "generation" in d["stages"]
     assert d["stages"]["generation"]["count"] == 1
 

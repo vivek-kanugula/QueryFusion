@@ -21,7 +21,7 @@ def get_rss_mb() -> float:
         import ctypes
         from ctypes import wintypes
 
-        class PROCESS_MEMORY_COUNTERS_EX(ctypes.Structure):
+        class PROCESS_MEMORY_COUNTERS_EX(ctypes.Structure):  # noqa: N801
             _fields_ = [
                 ("cb", wintypes.DWORD),
                 ("PageFaultCount", wintypes.DWORD),
@@ -56,7 +56,7 @@ def get_rss_mb() -> float:
 
 def main():
     print("=" * 60)
-    print("RSS Memory Spike — Heroku 512 MB Feasibility Check")
+    print("RSS Memory Spike — Container Memory Budget Feasibility Check")
     print("=" * 60)
 
     baseline = get_rss_mb()
@@ -101,19 +101,19 @@ def main():
     print(f"  Model load time:     {boot_time:.1f}s")
     print()
 
-    heroku_limit = 512
-    headroom = heroku_limit - post_rerank
+    container_limit = 512
+    headroom = container_limit - post_rerank
     if headroom > 50:
-        verdict = f"GO — {headroom:.0f} MB headroom on 512 MB dyno"
+        verdict = f"GO — {headroom:.0f} MB headroom on {container_limit} MB container"
     elif headroom > 0:
         verdict = f"CAUTION — only {headroom:.0f} MB headroom, may OOM under load"
     else:
-        verdict = f"NO-GO — exceeds 512 MB by {-headroom:.0f} MB, need Standard-2X or ONNX optimization"
+        verdict = f"NO-GO — exceeds {container_limit} MB by {-headroom:.0f} MB, need larger memory tier or ONNX optimization"
 
-    print(f"  Heroku verdict: {verdict}")
+    print(f"  Memory verdict: {verdict}")
     print("=" * 60)
 
-    return post_rerank < heroku_limit
+    return post_rerank < container_limit
 
 
 if __name__ == "__main__":
