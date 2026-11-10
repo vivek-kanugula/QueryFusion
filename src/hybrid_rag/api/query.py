@@ -51,6 +51,7 @@ class QueryRequest(BaseModel):
     provider: str | None = None
     query_expansion: bool = False
     enable_crag: bool = True
+    adaptive_alpha: bool = False
 
 
 def _sse_event(event: str, data: dict) -> str:
@@ -66,14 +67,43 @@ def _check_rate_limit(client_ip: str) -> None:
     _request_counts[client_ip].append(now)
 
 
+@router.post("/classify")
+async def classify_query_endpoint(request: QueryRequest):
+    """Classify query difficulty and return recommended alpha."""
+    from hybrid_rag.retrieval.query_classifier import classify_query
+
+    result = classify_query(request.question)
+    return {
+        "category": result.category.value,
+        "confidence": result.confidence,
+        "recommended_alpha": result.alpha,
+        "reason": result.reason,
+    }
+
+
 @router.post("/stream")
 async def stream_query(request: QueryRequest):
     async def event_stream():
         doc_ids = tuple(request.document_ids) if request.document_ids else None
+
+        effective_alpha = request.alpha
+        classification_info = None
+        if request.adaptive_alpha:
+            from hybrid_rag.retrieval.query_classifier import classify_query
+
+            classification = classify_query(request.question)
+            effective_alpha = classification.alpha
+            classification_info = {
+                "category": classification.category.value,
+                "confidence": classification.confidence,
+                "alpha": classification.alpha,
+                "reason": classification.reason,
+            }
+
         config = PipelineConfig(
             retrieval_strategy=request.retrieval_strategy,
             chunking_strategy=request.chunking_strategy,
-            alpha=request.alpha,
+            alpha=effective_alpha,
             rerank_enabled=request.rerank_enabled,
             temperature=request.temperature,
             document_ids=doc_ids,
@@ -82,7 +112,10 @@ async def stream_query(request: QueryRequest):
 
         trace = QueryTrace(config=config, query=request.question)
 
-        yield _sse_event("stage", {"name": "started", "trace_id": trace.trace_id})
+        started_data: dict = {"name": "started", "trace_id": trace.trace_id}
+        if classification_info:
+            started_data["classification"] = classification_info
+        yield _sse_event("stage", started_data)
 
         search_query = request.question
         if request.chat_history:

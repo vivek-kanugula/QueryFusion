@@ -3,8 +3,6 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
-
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -18,6 +16,8 @@ from hybrid_rag.api.jobs import router as jobs_router
 from hybrid_rag.api.query import router as query_router
 from hybrid_rag.api.traces import router as traces_router
 from hybrid_rag.settings import settings
+
+logger = logging.getLogger(__name__)
 
 
 class RequestIDMiddleware(BaseHTTPMiddleware):
@@ -38,6 +38,7 @@ async def lifespan(app: FastAPI):
     def _init_bm25():
         try:
             from concurrent.futures import ThreadPoolExecutor
+
             from hybrid_rag.db.engine import SessionLocal
             from hybrid_rag.retrieval.bm25_store import get_bm25_store
 

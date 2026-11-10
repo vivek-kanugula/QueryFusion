@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from hybrid_rag.db.engine import get_db
-from hybrid_rag.models.evaluation import EvaluationMetric, EvaluationRun
+from hybrid_rag.models.evaluation import EvaluationRun
 
 router = APIRouter(
     prefix="/api/v1/evaluation",

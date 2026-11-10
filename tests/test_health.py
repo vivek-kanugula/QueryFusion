@@ -37,7 +37,9 @@ def test_health_db_disconnected():
 @pytest.mark.asyncio
 async def test_lifespan_bm25_init_error_logged(caplog):
     import logging
+
     from fastapi import FastAPI
+
     from hybrid_rag.app import lifespan
 
     dummy_app = FastAPI()

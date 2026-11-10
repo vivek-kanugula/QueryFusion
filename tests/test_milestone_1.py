@@ -9,7 +9,6 @@ Covers:
 
 from __future__ import annotations
 
-import asyncio
 import json
 from unittest.mock import MagicMock, patch
 
@@ -17,14 +16,12 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from hybrid_rag.api.query import QueryRequest, router as query_router
-from hybrid_rag.core.jobs import JobRegistry, JobStatus
+from hybrid_rag.api.query import router as query_router
+from hybrid_rag.core.jobs import JobRegistry
 from hybrid_rag.retrieval.bm25_store import Bm25Store
 from hybrid_rag.retrieval.retriever import (
-    dense_retrieve,
     full_retrieve,
     multi_query_retrieve,
-    sparse_retrieve,
 )
 from hybrid_rag.retrieval.tokenizer import (
     expand_technical_tokens,
@@ -36,7 +33,6 @@ from hybrid_rag.schemas.pipeline import (
     QueryTrace,
     StageTrace,
 )
-
 
 # =====================================================================
 # CR-03 Tests: BM25 Index Crash on Empty / Stopword-Only Vocabulary
@@ -324,11 +320,10 @@ def test_query_stream_api_dense_only_stages():
         patch("hybrid_rag.generation.pipeline.generate_grounded_answer") as mock_gen,
     ):
         from hybrid_rag.schemas.generation import (
-            Citation,
+            CompositeConfidence,
             GenerationResponse,
             GroundedAnswer,
             VerificationResult,
-            CompositeConfidence,
         )
         mock_gen.return_value = GenerationResponse(
             query="test",
@@ -369,11 +364,10 @@ def test_query_stream_api_bm25_only_stages():
         patch("hybrid_rag.generation.pipeline.generate_grounded_answer") as mock_gen,
     ):
         from hybrid_rag.schemas.generation import (
-            Citation,
+            CompositeConfidence,
             GenerationResponse,
             GroundedAnswer,
             VerificationResult,
-            CompositeConfidence,
         )
         mock_gen.return_value = GenerationResponse(
             query="test",

@@ -266,7 +266,7 @@ def _parse_response(raw: str | None, candidates: list[CandidateResult]) -> Groun
             candidate = citation_map[target_chunk_id]
 
         if candidate is not None:
-            marker = cid if cid.startswith("[C") else f"[C{candidate.rank}]" if hasattr(candidate, "rank") and candidate.rank else (f"[{cid}]" if cid else f"[C1]")
+            marker = cid if cid.startswith("[C") else f"[C{candidate.rank}]" if hasattr(candidate, "rank") and candidate.rank else (f"[{cid}]" if cid else "[C1]")
             quote = str(c.get("evidence_quote") or c.get("text") or "")
             citations.append(
                 Citation(

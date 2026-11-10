@@ -317,6 +317,68 @@ def get_chunk_context(
     }
 
 
+@router.get("/{document_id}/chunk-comparison")
+def compare_chunking_strategies(
+    document_id: uuid.UUID,
+    db: Session = Depends(get_db),
+):
+    """Show how each chunking strategy splits the same document."""
+    doc = db.get(Document, document_id)
+    if doc is None:
+        doc = db.query(Document).filter(Document.id == document_id).first()
+    if doc is None:
+        raise HTTPException(404, "Document not found")
+
+    full_text = ""
+    chunks_in_db = (
+        db.query(DocumentChunk)
+        .filter(DocumentChunk.document_id == document_id)
+        .order_by(DocumentChunk.chunk_index)
+        .all()
+    )
+    if chunks_in_db:
+        full_text = "\n".join(c.content for c in chunks_in_db)
+
+    if not full_text.strip():
+        return {
+            "document_id": str(document_id),
+            "filename": doc.filename,
+            "strategies": {},
+            "error": "No text content available for comparison",
+        }
+
+    from hybrid_rag.ingest.chunkers import chunk_fixed, chunk_structure_aware
+
+    strategies_output = {}
+    for name, chunker_fn in [
+        ("fixed", chunk_fixed),
+        ("structure", chunk_structure_aware),
+    ]:
+        try:
+            result_chunks = chunker_fn(full_text)
+            strategies_output[name] = [
+                {
+                    "index": c.chunk_index,
+                    "token_count": c.token_count,
+                    "char_start": c.char_offset_start,
+                    "char_end": c.char_offset_end,
+                    "section_heading": c.section_heading,
+                    "preview": c.text[:200] + ("..." if len(c.text) > 200 else ""),
+                }
+                for c in result_chunks
+            ]
+        except Exception as exc:
+            strategies_output[name] = {"error": str(exc)}
+
+    return {
+        "document_id": str(document_id),
+        "filename": doc.filename,
+        "current_strategy": doc.chunking_strategy,
+        "text_length": len(full_text),
+        "strategies": strategies_output,
+    }
+
+
 @router.get("/{document_id}/chunks")
 def list_document_chunks(
     document_id: uuid.UUID,
