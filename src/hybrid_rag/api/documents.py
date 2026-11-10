@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -30,6 +30,8 @@ router = APIRouter(
 def upload_document(
     file: UploadFile = File(...),
     chunking_strategy: str = Query(default="fixed"),
+    background: bool = Query(default=False),
+    background_tasks: BackgroundTasks = None,
     db: Session = Depends(get_db),
 ):
     if chunking_strategy not in CHUNKERS:
@@ -89,12 +91,53 @@ def upload_document(
         )
 
     doc = Document(
+        id=uuid.uuid4(),
         filename=parsed.filename,
         file_type=parsed.file_type,
         file_hash=parsed.content_hash,
         size_bytes=parsed.size_bytes,
         chunking_strategy=chunking_strategy,
+        status="processing" if background else "ready",
+        is_evictable=True,
     )
+
+    from sqlalchemy.exc import IntegrityError
+
+    if background:
+        from hybrid_rag.core.jobs import job_registry
+        from hybrid_rag.ingest.index_manager import process_document_background
+
+        if background_tasks is None:
+            background_tasks = BackgroundTasks()
+
+        job = job_registry.create_job("document_ingest")
+
+        try:
+            db.add(doc)
+            db.commit()
+            db.refresh(doc)
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(409, "Duplicate file uploaded concurrently")
+
+        background_tasks.add_task(
+            process_document_background,
+            doc.id,
+            data,
+            file.filename or "unknown",
+            chunking_strategy,
+            job.job_id,
+        )
+
+        return {
+            "document_id": str(doc.id),
+            "filename": doc.filename,
+            "file_type": doc.file_type,
+            "chunks_created": 0,
+            "chunking_strategy": chunking_strategy,
+            "status": "processing",
+            "job_id": job.job_id,
+        }
 
     chunker = CHUNKERS[chunking_strategy]
 
@@ -108,8 +151,6 @@ def upload_document(
     else:
         chunks = chunk_fixed(parsed.full_text)
 
-    from sqlalchemy.exc import IntegrityError
-
     try:
         db_chunks = index_document(db, doc, chunks, chunking_strategy)
     except IntegrityError:
@@ -122,6 +163,8 @@ def upload_document(
         "file_type": doc.file_type,
         "chunks_created": len(db_chunks),
         "chunking_strategy": chunking_strategy,
+        "status": "ready",
+        "job_id": None,
     }
 
 
@@ -192,11 +235,29 @@ def list_documents(db: Session = Depends(get_db)):
             "size_bytes": d.size_bytes,
             "chunking_strategy": d.chunking_strategy,
             "chunk_count": len(d.chunks),
+            "status": getattr(d, "status", "ready") or "ready",
+            "error_message": getattr(d, "error_message", None),
             "is_evictable": d.is_evictable,
             "created_at": d.created_at.isoformat(),
         }
         for d in docs
     ]
+
+
+@router.get("/{document_id}/status")
+def get_document_status(document_id: uuid.UUID, db: Session = Depends(get_db)):
+    """Retrieve async ingestion status and chunk count for a document."""
+    doc = db.get(Document, document_id)
+    if not doc:
+        raise HTTPException(404, "Document not found")
+    return {
+        "document_id": str(doc.id),
+        "filename": doc.filename,
+        "status": getattr(doc, "status", "ready") or "ready",
+        "error_message": getattr(doc, "error_message", None),
+        "chunk_count": len(doc.chunks) if doc.chunks else 0,
+        "chunking_strategy": doc.chunking_strategy,
+    }
 
 
 @router.get("/storage")

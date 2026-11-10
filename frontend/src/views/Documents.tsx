@@ -77,9 +77,17 @@ export default function Documents() {
   const [threshold, setThreshold] = useState(0.5);
   const [clientError, setClientError] = useState<string | null>(null);
 
+  const [asyncUpload, setAsyncUpload] = useState(false);
+
   const { data: docs = [], isLoading } = useQuery({
     queryKey: ["documents"],
     queryFn: fetchDocuments,
+    refetchInterval: (query) => {
+      const hasProcessing = query.state.data?.some(
+        (d: Document) => d.status === "processing",
+      );
+      return hasProcessing ? 2_000 : 8_000;
+    },
   });
 
   const { data: storage } = useQuery({
@@ -90,7 +98,7 @@ export default function Documents() {
 
   const uploadMut = useMutation({
     mutationFn: (file: File) =>
-      uploadDocument(file, strategy, chunkSize, overlap, threshold),
+      uploadDocument(file, strategy, chunkSize, overlap, threshold, asyncUpload || file.size > 2 * 1024 * 1024),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["documents"] });
       qc.invalidateQueries({ queryKey: ["storage"] });
@@ -440,6 +448,17 @@ export default function Documents() {
               disabled={strategy !== "semantic"}
             />
           </div>
+          <div className="flex items-center gap-2 col-span-full pt-1">
+            <label className="flex items-center gap-2 text-[12px] text-[var(--text-secondary)] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={asyncUpload}
+                onChange={(e) => setAsyncUpload(e.target.checked)}
+                className="rounded"
+              />
+              <span>Process asynchronously in background (recommended for large files)</span>
+            </label>
+          </div>
         </div>
       </div>
 
@@ -515,13 +534,28 @@ export default function Documents() {
                     />
                   </td>
                   <td className="px-4 py-3">
-                    <button
-                      onClick={() => setInspecting(doc.id)}
-                      className="flex items-center gap-2 text-[var(--text-primary)] hover:text-[var(--accent-fg)] transition-colors"
-                    >
-                      <File size={14} strokeWidth={1.5} />
-                      {doc.filename}
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setInspecting(doc.id)}
+                        className="flex items-center gap-2 text-[var(--text-primary)] hover:text-[var(--accent-fg)] transition-colors text-left"
+                      >
+                        <File size={14} strokeWidth={1.5} className="shrink-0" />
+                        <span>{doc.filename}</span>
+                      </button>
+                      {doc.status === "processing" && (
+                        <span className="text-[10px] text-[var(--accent-fg)] font-mono">
+                          indexing...
+                        </span>
+                      )}
+                      {doc.status === "failed" && (
+                        <span
+                          className="text-[10px] text-[var(--negative)] font-mono"
+                          title={doc.error_message || "Ingestion failed"}
+                        >
+                          failed
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-4 py-3 text-[12px] font-mono text-[var(--text-muted)]">
                     {doc.file_type}
