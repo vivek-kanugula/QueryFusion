@@ -139,7 +139,7 @@ export default function Evaluation() {
     staleTime: 60_000,
   });
 
-  const strategies = data?.strategies ?? [];
+  const strategies = useMemo(() => data?.strategies ?? [], [data?.strategies]);
 
   const comparisonMetrics = useMemo(() => buildComparisonMetrics(strategies), [strategies]);
   const tradeoffData = useMemo(() => buildTradeoffData(strategies), [strategies]);

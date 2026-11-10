@@ -6,9 +6,9 @@ Delete order: Postgres (cascade) -> BM25 rebuild
 
 from __future__ import annotations
 
-from collections.abc import Callable
 import logging
 import uuid
+from collections.abc import Callable
 
 from sqlalchemy.orm import Session
 
