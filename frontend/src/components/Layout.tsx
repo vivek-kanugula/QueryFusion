@@ -38,55 +38,56 @@ export default function Layout() {
     localStorage.setItem("theme", theme);
   }, [theme]);
 
-  const toggleTheme = () => {
-    setTheme((prev) => (prev === "dark" ? "light" : "dark"));
-  };
-
   return (
     <div className="flex h-screen overflow-hidden">
-      <nav className="w-56 shrink-0 border-r border-[var(--color-border)] bg-[var(--color-bg-secondary)] flex flex-col">
-        <div className="px-4 py-5 border-b border-[var(--color-border)]">
-          <h1 className="text-lg font-semibold tracking-tight">Hybrid RAG</h1>
-          <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-            Intelligence Platform
+      <nav className="w-[248px] shrink-0 border-r border-[var(--border)] bg-[var(--surface-deep)] flex flex-col">
+        <div className="px-5 h-14 flex flex-col justify-center border-b border-[var(--border)]">
+          <h1 className="text-[15px] font-medium tracking-tight text-[var(--text-primary)]">
+            Hybrid RAG
+          </h1>
+          <p className="text-[11px] text-[var(--text-muted)] mt-0.5">
+            Retrieval benchmarking
           </p>
         </div>
-        <div className="flex-1 py-2">
-          {NAV.map(({ to, icon: Icon, label }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={to === "/"}
-              className={({ isActive }) =>
-                `flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${
-                  isActive
-                    ? "bg-[var(--color-primary)]/10 text-[var(--color-primary)] font-medium"
-                    : "text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]"
-                }`
-              }
-            >
-              <Icon size={18} />
-              {label}
-            </NavLink>
-          ))}
+
+        <div className="flex-1 py-3 px-3">
+          <div className="flex flex-col gap-0.5">
+            {NAV.map(({ to, icon: Icon, label }) => (
+              <NavLink
+                key={to}
+                to={to}
+                end={to === "/"}
+                className={({ isActive }) =>
+                  `flex items-center gap-2.5 px-3 h-9 text-[13px] rounded-lg transition-colors ${
+                    isActive
+                      ? "bg-[var(--surface-raised)] text-[var(--text-primary)] font-medium"
+                      : "text-[var(--text-secondary)] hover:bg-[var(--surface-raised)] hover:text-[var(--text-primary)]"
+                  }`
+                }
+              >
+                <Icon size={16} strokeWidth={1.5} />
+                {label}
+              </NavLink>
+            ))}
+          </div>
         </div>
-        <div className="p-3 border-t border-[var(--color-border)]">
+
+        <div className="px-3 pb-3">
           <button
             type="button"
-            onClick={toggleTheme}
-            className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium rounded-xl text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
-            title={`Switch to ${theme === "dark" ? "Light" : "Dark"} Mode`}
+            onClick={() => setTheme((p) => (p === "dark" ? "light" : "dark"))}
+            className="w-full flex items-center gap-2.5 px-3 h-9 text-[13px] rounded-lg text-[var(--text-muted)] hover:bg-[var(--surface-raised)] hover:text-[var(--text-secondary)] transition-colors cursor-pointer"
           >
-            <span className="flex items-center gap-2.5">
-              {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
-              <span>{theme === "dark" ? "Light Mode" : "Dark Mode"}</span>
-            </span>
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] uppercase font-mono">
-              {theme}
-            </span>
+            {theme === "dark" ? (
+              <Sun size={16} strokeWidth={1.5} />
+            ) : (
+              <Moon size={16} strokeWidth={1.5} />
+            )}
+            <span>{theme === "dark" ? "Light mode" : "Dark mode"}</span>
           </button>
         </div>
       </nav>
+
       <main className="flex-1 overflow-y-auto p-6">
         <Outlet />
       </main>
