@@ -7,8 +7,10 @@ SRC_DIR = Path(__file__).resolve().parent / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-# Ensure alembic migrations run if DATABASE_URL is configured
-if os.environ.get("DATABASE_URL"):
+from hybrid_rag.settings import settings  # noqa: E402
+
+# Ensure alembic migrations run if database_url is configured
+if settings.database_url and "localhost" not in settings.database_url:
     try:
         from alembic.config import Config
 
