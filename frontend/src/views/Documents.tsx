@@ -695,7 +695,7 @@ function ChunkComparisonDrawer({
         </div>
 
         {isLoading ? (
-          <p className="p-5 text-[13px] text-[var(--text-muted)]">Analyzing chunking strategies...</p>
+          <p className="p-5 text-[13px] text-[var(--text-muted)]">Loading...</p>
         ) : isError ? (
           <div className="p-5 text-[13px] text-[var(--negative)] flex items-center gap-2">
             <AlertCircle size={16} strokeWidth={1.5} className="shrink-0" />
@@ -724,7 +724,7 @@ function ChunkComparisonDrawer({
                         {STRATEGY_LABELS[name] || name}
                       </span>
                       {isCurrent && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--accent-fg)] text-white font-medium">
+                        <span className="text-[10px] text-[var(--accent-fg)] font-medium">
                           active
                         </span>
                       )}
@@ -764,7 +764,7 @@ function ChunkComparisonDrawer({
                           </span>
                           <div className="flex-1 h-5 bg-[var(--surface-raised)] rounded overflow-hidden">
                             <div
-                              className="h-full rounded transition-all"
+                              className="h-full rounded transition-[width]"
                               style={{
                                 width: `${(c.token_count / maxTokens) * 100}%`,
                                 backgroundColor: strategyColors[name] || "var(--text-muted)",
