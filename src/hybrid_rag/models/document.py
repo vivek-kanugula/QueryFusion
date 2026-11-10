@@ -17,6 +17,8 @@ class Document(Base):
     file_hash: Mapped[str] = mapped_column(String(64), unique=True)
     size_bytes: Mapped[int] = mapped_column(Integer)
     chunking_strategy: Mapped[str] = mapped_column(String(20))
+    status: Mapped[str] = mapped_column(String(20), default="ready", server_default="ready")
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_evictable: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

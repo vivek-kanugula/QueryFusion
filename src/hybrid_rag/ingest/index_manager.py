@@ -6,6 +6,7 @@ Delete order: Postgres (cascade) -> BM25 rebuild
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import logging
 import uuid
 
@@ -24,6 +25,7 @@ def index_document(
     document: Document,
     chunks: list[ChunkOutput],
     strategy: str,
+    progress_callback: Callable[[float, str], None] | None = None,
 ) -> list[DocumentChunk]:
     """Write chunks with pgvector embeddings to Postgres and rebuild BM25.
 
@@ -34,6 +36,8 @@ def index_document(
 
     texts = [c.text for c in chunks]
     embeddings = embed_texts(texts) if texts else []
+    if progress_callback:
+        progress_callback(35.0, f"Generated embeddings for {len(chunks)} chunks")
 
     db_chunks: list[DocumentChunk] = []
     for chunk, embedding in zip(chunks, embeddings):
@@ -66,7 +70,13 @@ def index_document(
         if result == -1:
             store.rebuild_from_db(db, strategy)
 
+        if progress_callback:
+            progress_callback(80.0, "Updated BM25 sparse index")
+
         db.commit()
+
+        if progress_callback:
+            progress_callback(100.0, "Committed chunks to database")
 
     except Exception as exc:
         logger.error(
@@ -105,6 +115,87 @@ def index_document(
         strategy,
     )
     return db_chunks
+
+
+def process_document_background(
+    document_id: uuid.UUID,
+    raw_data: bytes,
+    filename: str,
+    chunking_strategy: str,
+    job_id: str | None = None,
+) -> None:
+    """Asynchronous background worker to parse, chunk, embed, and index a document.
+
+    Runs decoupled from the HTTP request cycle with its own thread-safe DB session
+    and reports live progress to the core JobRegistry.
+    """
+    from hybrid_rag.core.jobs import job_registry
+    from hybrid_rag.db.engine import SessionLocal
+    from hybrid_rag.ingest.chunkers import CHUNKERS, chunk_fixed
+    from hybrid_rag.ingest.parsers import parse_file
+
+    with SessionLocal() as db:
+        doc = db.get(Document, document_id)
+        if not doc:
+            logger.error("Background task: Document %s not found in DB", document_id)
+            if job_id:
+                job_registry.fail_job(job_id, f"Document {document_id} not found")
+            return
+
+        try:
+            if job_id:
+                job_registry.update_progress(job_id, 10.0, "Parsing document structure...")
+
+            parsed = parse_file(raw_data, filename)
+
+            if job_id:
+                job_registry.update_progress(job_id, 25.0, "Splitting document into chunks...")
+
+            chunker = CHUNKERS.get(chunking_strategy, chunk_fixed)
+            if chunking_strategy == "structure" and parsed.sections:
+                section_dicts = [{"text": s.text, "heading": s.heading} for s in parsed.sections]
+                chunks = chunker(parsed.full_text, sections=section_dicts)
+            else:
+                chunks = chunker(parsed.full_text)
+
+            def _on_sub_progress(pct: float, msg: str) -> None:
+                if job_id:
+                    scaled = 30.0 + (pct / 100.0) * 60.0
+                    job_registry.update_progress(job_id, scaled, msg)
+
+            db_chunks = index_document(
+                db, doc, chunks, chunking_strategy, progress_callback=_on_sub_progress
+            )
+
+            doc.status = "ready"
+            doc.error_message = None
+            db.commit()
+
+            if job_id:
+                job_registry.complete_job(
+                    job_id,
+                    {
+                        "document_id": str(doc.id),
+                        "filename": doc.filename,
+                        "file_type": doc.file_type,
+                        "chunks_created": len(db_chunks),
+                        "chunking_strategy": chunking_strategy,
+                        "status": "ready",
+                    },
+                )
+            logger.info("Background indexing completed for document %s (%d chunks)", doc.id, len(db_chunks))
+
+        except Exception as exc:
+            logger.error("Background indexing failed for document %s: %s", document_id, exc, exc_info=True)
+            try:
+                doc.status = "failed"
+                doc.error_message = str(exc)
+                db.commit()
+            except Exception:
+                db.rollback()
+
+            if job_id:
+                job_registry.fail_job(job_id, str(exc))
 
 
 def delete_document(

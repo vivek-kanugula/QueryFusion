@@ -80,6 +80,7 @@ export interface Document {
   chunk_count: number;
   created_at: string;
   status?: string;
+  error_message?: string;
   size_bytes?: number;
   chunking_strategy?: string;
   is_evictable?: boolean;
@@ -91,6 +92,8 @@ export interface DocumentUploadResponse {
   file_type: string;
   chunks_created: number;
   chunking_strategy: string;
+  status?: string;
+  job_id?: string | null;
 }
 
 export interface Chunk {
@@ -188,10 +191,23 @@ export function batchDeleteDocuments(ids: string[]): Promise<void> {
   });
 }
 
+export interface DocumentStatusResponse {
+  document_id: string;
+  filename: string;
+  status: string;
+  error_message?: string | null;
+  chunk_count: number;
+  chunking_strategy: string;
+}
+
+export function fetchDocumentStatus(documentId: string): Promise<DocumentStatusResponse> {
+  return request(`/api/v1/documents/${documentId}/status`);
+}
+
 /**
  * Upload a document file to the backend for ingestion.
  *
- * Route: POST /api/v1/documents?chunking_strategy={strategy}
+ * Route: POST /api/v1/documents?chunking_strategy={strategy}&background={background}
  */
 export async function uploadDocument(
   file: File,
@@ -199,6 +215,7 @@ export async function uploadDocument(
   chunkSize: number,
   overlap: number,
   similarityThreshold: number,
+  background: boolean = false,
 ): Promise<DocumentUploadResponse> {
   const normalizedStrategy =
     strategy === "structure_aware" ? "structure" : strategy;
@@ -213,6 +230,9 @@ export async function uploadDocument(
   const queryParams = new URLSearchParams({
     chunking_strategy: normalizedStrategy,
   });
+  if (background) {
+    queryParams.set("background", "true");
+  }
 
   return request<DocumentUploadResponse>(
     `/api/v1/documents?${queryParams.toString()}`,
