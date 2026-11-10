@@ -1,4 +1,4 @@
-"""Trace inspection endpoint."""
+"""Trace inspection endpoint (development only)."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from dataclasses import asdict
 from fastapi import APIRouter, HTTPException
 
 from hybrid_rag.core.trace_store import trace_store
+from hybrid_rag.settings import settings
 
 router = APIRouter(
     prefix="/api/traces",
@@ -16,6 +17,8 @@ router = APIRouter(
 
 @router.get("/{trace_id}")
 def get_trace(trace_id: str):
+    if settings.is_production:
+        raise HTTPException(404, "Not Found")
     trace = trace_store.get(trace_id)
     if trace is None:
         raise HTTPException(404, "Trace not found")

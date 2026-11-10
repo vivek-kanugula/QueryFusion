@@ -169,6 +169,20 @@ def test_parse_invalid_json():
     assert result.citation_coverage == 0.0
 
 
+def test_parse_none_verification_safety_filtered():
+    result = _parse_verification(None)
+    assert len(result.claims) == 0
+    assert result.citation_coverage == 0.0
+    assert result.all_supported is False
+
+
+def test_parse_empty_string_verification():
+    result = _parse_verification("   ")
+    assert len(result.claims) == 0
+    assert result.citation_coverage == 0.0
+    assert result.all_supported is False
+
+
 def test_parse_invalid_verdict_defaults_unsupported():
     raw = json.dumps(
         [

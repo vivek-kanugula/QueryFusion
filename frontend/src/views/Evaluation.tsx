@@ -2,13 +2,14 @@ import {
   Activity,
   Award,
   BarChart3,
-  CheckCircle,
-  Filter,
+  Database,
   Layers,
+  Loader2,
   TrendingUp,
   Zap,
 } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   Bar,
   BarChart,
@@ -21,20 +22,43 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { fetchEvalResults, type EvalStrategyResult } from "../lib/api";
 
-interface MetricResult {
-  metric: string;
-  bm25: number;
-  dense: number;
-  hybrid: number;
-  hybrid_rerank: number;
+const STRATEGY_COLORS: Record<string, string> = {
+  bm25: "#f59e0b",
+  dense: "#94a3b8",
+  dense_only: "#94a3b8",
+  hybrid: "#6366f1",
+  hybrid_rerank: "#10b981",
+};
+
+const STRATEGY_LABELS: Record<string, string> = {
+  bm25: "BM25 Sparse",
+  dense: "Dense pgvector",
+  dense_only: "Dense pgvector",
+  hybrid: "Hybrid RRF",
+  hybrid_rerank: "Hybrid + Reranker",
+};
+
+const STRATEGY_DESCRIPTIONS: Record<string, string> = {
+  bm25: "Exact keyword token matching",
+  dense: "Cosine semantic embedding search",
+  dense_only: "Cosine semantic embedding search",
+  hybrid: "Fused reciprocal rank scoring",
+  hybrid_rerank: "Cross-Encoder contextual re-scoring",
+};
+
+function strategyLabel(key: string): string {
+  return STRATEGY_LABELS[key] ?? key;
 }
 
-interface LatencyStage {
-  stage: string;
-  p50: number;
-  p90: number;
-  p95: number;
+function strategyColor(key: string): string {
+  return STRATEGY_COLORS[key] ?? "#64748b";
+}
+
+interface ComparisonRow {
+  metric: string;
+  [strategy: string]: string | number;
 }
 
 interface TradeoffPoint {
@@ -45,157 +69,161 @@ interface TradeoffPoint {
   color: string;
 }
 
-interface CategoryResult {
-  category: string;
-  bm25: number;
-  dense: number;
-  hybrid: number;
-  hybrid_rerank: number;
+interface LatencyStage {
+  stage: string;
+  p50: number;
+  p90: number;
+  p95: number;
 }
 
-interface WinLoss {
-  question: string;
-  category: string;
-  bm25_score: number;
-  dense_score: number;
-  hybrid_score: number;
-  hybrid_rerank_score: number;
-  winner: string;
+function buildComparisonMetrics(strategies: EvalStrategyResult[]): ComparisonRow[] {
+  const metricDefs = [
+    { key: "mrr", label: "MRR" },
+    { key: "precision_at_k", label: "P@5" },
+    { key: "recall_at_k", label: "R@5" },
+    { key: "ndcg_at_k", label: "NDCG@5" },
+    { key: "faithfulness_score", label: "Faithfulness" },
+    { key: "citation_accuracy", label: "Citation Acc." },
+  ];
+
+  return metricDefs.map((def) => {
+    const row: ComparisonRow = { metric: def.label };
+    for (const s of strategies) {
+      row[s.retrieval_strategy] = Number(
+        (s.metrics[def.key as keyof typeof s.metrics] ?? 0).toFixed(3),
+      );
+    }
+    return row;
+  });
 }
 
-const COMPARISON_METRICS: MetricResult[] = [
-  {
-    metric: "Hit Rate @ 5",
-    bm25: 0.64,
-    dense: 0.68,
-    hybrid: 0.79,
-    hybrid_rerank: 0.87,
-  },
-  {
-    metric: "MRR",
-    bm25: 0.59,
-    dense: 0.65,
-    hybrid: 0.73,
-    hybrid_rerank: 0.81,
-  },
-  {
-    metric: "P@5",
-    bm25: 0.55,
-    dense: 0.62,
-    hybrid: 0.71,
-    hybrid_rerank: 0.78,
-  },
-  {
-    metric: "R@5",
-    bm25: 0.51,
-    dense: 0.58,
-    hybrid: 0.67,
-    hybrid_rerank: 0.74,
-  },
-  {
-    metric: "Faithfulness",
-    bm25: 0.76,
-    dense: 0.82,
-    hybrid: 0.85,
-    hybrid_rerank: 0.89,
-  },
-  {
-    metric: "Citation Acc.",
-    bm25: 0.71,
-    dense: 0.75,
-    hybrid: 0.8,
-    hybrid_rerank: 0.86,
-  },
-];
+function buildTradeoffData(strategies: EvalStrategyResult[]): TradeoffPoint[] {
+  return strategies.map((s) => {
+    let avgLatency = 0;
+    if (s.latency_breakdown && typeof s.latency_breakdown === "object") {
+      const stages = s.latency_breakdown as Record<string, Record<string, number>>;
+      const means = Object.values(stages)
+        .map((v) => (typeof v === "object" && v !== null ? v.mean ?? 0 : 0))
+        .filter((v) => v > 0);
+      avgLatency = means.reduce((a, b) => a + b, 0);
+    }
+    return {
+      strategy: strategyLabel(s.retrieval_strategy),
+      latency: Math.round(avgLatency),
+      accuracy: Math.round((s.metrics.precision_at_k ?? 0) * 100),
+      mrr: Number((s.metrics.mrr ?? 0).toFixed(3)),
+      color: strategyColor(s.retrieval_strategy),
+    };
+  });
+}
 
-const TRADEOFF_DATA: TradeoffPoint[] = [
-  { strategy: "BM25 Sparse", latency: 18, accuracy: 64, mrr: 59, color: "#f59e0b" },
-  { strategy: "Dense Vector", latency: 52, accuracy: 68, mrr: 65, color: "#94a3b8" },
-  { strategy: "Hybrid RRF", latency: 68, accuracy: 79, mrr: 73, color: "#6366f1" },
-  { strategy: "Hybrid + Reranker", latency: 155, accuracy: 87, mrr: 81, color: "#10b981" },
-];
+function buildLatencyBreakdown(strategies: EvalStrategyResult[]): LatencyStage[] {
+  const best = strategies.find((s) => s.retrieval_strategy === "hybrid_rerank") ?? strategies[0];
+  if (!best?.latency_breakdown) return [];
 
-const LATENCY_BREAKDOWN: LatencyStage[] = [
-  { stage: "BM25 Search", p50: 12, p90: 22, p95: 28 },
-  { stage: "Dense pgvector", p50: 45, p90: 78, p95: 95 },
-  { stage: "RRF Fusion", p50: 3, p90: 5, p95: 7 },
-  { stage: "Cross-Reranker", p50: 85, p90: 120, p95: 145 },
-  { stage: "LLM Generation", p50: 380, p90: 520, p95: 610 },
-  { stage: "Citation Verifier", p50: 340, p90: 480, p95: 560 },
-];
+  const breakdown = best.latency_breakdown as Record<
+    string,
+    { p50?: number; p90?: number; p95?: number; mean?: number }
+  >;
+  return Object.entries(breakdown)
+    .filter(([, v]) => typeof v === "object" && v !== null)
+    .map(([stage, v]) => ({
+      stage: stage.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+      p50: Math.round(v.p50 ?? v.mean ?? 0),
+      p90: Math.round(v.p90 ?? 0),
+      p95: Math.round(v.p95 ?? 0),
+    }))
+    .filter((s) => s.p50 > 0 || s.p90 > 0);
+}
 
-const CATEGORY_BENCHMARKS: CategoryResult[] = [
-  { category: "Exact Identifiers / IDs", bm25: 0.88, dense: 0.62, hybrid: 0.91, hybrid_rerank: 0.94 },
-  { category: "Factual Knowledge", bm25: 0.65, dense: 0.71, hybrid: 0.78, hybrid_rerank: 0.84 },
-  { category: "Multi-Hop Reasoning", bm25: 0.38, dense: 0.54, hybrid: 0.62, hybrid_rerank: 0.71 },
-  { category: "Acronyms & Jargon", bm25: 0.79, dense: 0.58, hybrid: 0.83, hybrid_rerank: 0.88 },
-  { category: "Semantic Paraphrasing", bm25: 0.42, dense: 0.76, hybrid: 0.81, hybrid_rerank: 0.86 },
-];
+function EmptyState() {
+  return (
+    <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
+      <div className="p-4 rounded-2xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
+        <Database size={32} className="text-[var(--color-text-tertiary)]" />
+      </div>
+      <div className="space-y-2 max-w-md">
+        <h3 className="text-lg font-semibold text-[var(--color-text)]">
+          No Experiment Results Yet
+        </h3>
+        <p className="text-sm text-[var(--color-text-secondary)]">
+          Run the evaluation benchmark to populate this dashboard with real metrics.
+          Results are stored in the database and displayed automatically.
+        </p>
+        <pre className="mt-4 text-xs bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg p-3 text-left text-[var(--color-text-secondary)]">
+          <code>python -m hybrid_rag.eval.experiment_4</code>
+        </pre>
+      </div>
+    </div>
+  );
+}
 
-const WIN_LOSS_CASES: WinLoss[] = [
-  {
-    question: "What is chunking_strategy 'structure' and how does it split headings?",
-    category: "Exact Identifiers / IDs",
-    bm25_score: 0.92,
-    dense_score: 0.74,
-    hybrid_score: 0.94,
-    hybrid_rerank_score: 0.98,
-    winner: "hybrid_rerank",
-  },
-  {
-    question: "Explain the cosine distance formula used in pgvector embeddings.",
-    category: "Factual Knowledge",
-    bm25_score: 0.68,
-    dense_score: 0.85,
-    hybrid_score: 0.9,
-    hybrid_rerank_score: 0.94,
-    winner: "hybrid_rerank",
-  },
-  {
-    question: "Find document chunk with ID chunk-98f214-alpha.",
-    category: "Exact Identifiers / IDs",
-    bm25_score: 0.99,
-    dense_score: 0.45,
-    hybrid_score: 0.96,
-    hybrid_rerank_score: 0.99,
-    winner: "bm25",
-  },
-  {
-    question: "How does reciprocal rank fusion weight sparse vs dense rankings?",
-    category: "Multi-Hop Reasoning",
-    bm25_score: 0.62,
-    dense_score: 0.72,
-    hybrid_score: 0.88,
-    hybrid_rerank_score: 0.95,
-    winner: "hybrid_rerank",
-  },
-  {
-    question: "Conceptual overview of grounding citation verification.",
-    category: "Semantic Paraphrasing",
-    bm25_score: 0.51,
-    dense_score: 0.92,
-    hybrid_score: 0.89,
-    hybrid_rerank_score: 0.94,
-    winner: "hybrid_rerank",
-  },
-];
+function LoadingState() {
+  return (
+    <div className="flex items-center justify-center py-20">
+      <Loader2 size={24} className="animate-spin text-[var(--color-primary)]" />
+      <span className="ml-2 text-sm text-[var(--color-text-secondary)]">Loading evaluation results...</span>
+    </div>
+  );
+}
 
-const STRATEGY_COLORS = {
-  bm25: "#f59e0b",
-  dense: "#94a3b8",
-  hybrid: "#6366f1",
-  hybrid_rerank: "#10b981",
-};
+function ErrorState({ message }: { message: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-20 text-center space-y-2">
+      <p className="text-sm text-red-500">Failed to load evaluation results</p>
+      <p className="text-xs text-[var(--color-text-tertiary)]">{message}</p>
+    </div>
+  );
+}
 
 export default function Evaluation() {
   const [activeTab, setActiveTab] = useState<"metrics" | "tradeoff">("metrics");
-  const [categoryFilter, setCategoryFilter] = useState<string>("all");
 
-  const categories = ["all", ...CATEGORY_BENCHMARKS.map((c) => c.category)];
-  const filteredWinLoss =
-    categoryFilter === "all"
-      ? WIN_LOSS_CASES
-      : WIN_LOSS_CASES.filter((w) => w.category === categoryFilter);
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["eval-results"],
+    queryFn: fetchEvalResults,
+    staleTime: 60_000,
+  });
+
+  const strategies = data?.strategies ?? [];
+
+  const comparisonMetrics = useMemo(() => buildComparisonMetrics(strategies), [strategies]);
+  const tradeoffData = useMemo(() => buildTradeoffData(strategies), [strategies]);
+  const latencyBreakdown = useMemo(() => buildLatencyBreakdown(strategies), [strategies]);
+
+  const strategyKeys = strategies.map((s) => s.retrieval_strategy);
+  const bestStrategy =
+    strategies.length > 0
+      ? strategies.reduce((best, s) => (s.metrics.mrr > best.metrics.mrr ? s : best))
+      : null;
+
+  if (isLoading) {
+    return (
+      <div className="max-w-7xl mx-auto">
+        <LoadingState />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="max-w-7xl mx-auto">
+        <ErrorState message={error instanceof Error ? error.message : String(error)} />
+      </div>
+    );
+  }
+
+  if (!data?.has_data || strategies.length === 0) {
+    return (
+      <div className="max-w-7xl mx-auto space-y-8">
+        <div className="flex items-center gap-2">
+          <TrendingUp size={22} className="text-[var(--color-primary)]" />
+          <h2 className="text-2xl font-semibold">Empirical Retrieval & RAG Benchmark</h2>
+        </div>
+        <EmptyState />
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-7xl mx-auto space-y-8">
@@ -205,9 +233,12 @@ export default function Evaluation() {
           <div className="flex items-center gap-2">
             <TrendingUp size={22} className="text-[var(--color-primary)]" />
             <h2 className="text-2xl font-semibold">Empirical Retrieval & RAG Benchmark</h2>
+            <span className="text-[11px] font-medium px-2.5 py-0.5 rounded-full bg-[var(--color-primary)]/10 text-[var(--color-primary)] border border-[var(--color-primary)]/20">
+              {strategies.length} Strategies • N={strategies[0]?.n_questions ?? "?"}
+            </span>
           </div>
           <p className="text-xs text-[var(--color-text-tertiary)] mt-1">
-            Quantitative evaluation: BM25 Lexical vs. Dense Vector vs. Hybrid RRF vs. Cross-Encoder Reranking
+            Empirical benchmark from stored evaluation runs: {strategyKeys.map(strategyLabel).join(" vs. ")}
           </p>
         </div>
 
@@ -222,7 +253,7 @@ export default function Evaluation() {
                   : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
               }`}
             >
-              Accuracy Metrics (H@5 & MRR)
+              Accuracy Metrics
             </button>
             <button
               type="button"
@@ -234,115 +265,71 @@ export default function Evaluation() {
               }`}
             >
               <Zap size={13} />
-              <span>Latency vs. Accuracy Curve</span>
+              <span>Latency vs. Accuracy</span>
             </button>
           </div>
         </div>
       </div>
 
-      {/* 4-Way Strategy Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* BM25 */}
-        <div className="bg-[var(--color-bg-secondary)] rounded-xl p-4 border border-[var(--color-border)] space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="font-semibold text-sm text-[var(--color-text)]">BM25 Sparse</span>
-            <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: STRATEGY_COLORS.bm25 }} />
-          </div>
-          <p className="text-xs text-[var(--color-text-tertiary)]">Exact keyword token matching</p>
-          <div className="grid grid-cols-3 gap-2 pt-2 border-t border-[var(--color-border)]">
-            <div>
-              <p className="text-[10px] text-[var(--color-text-tertiary)] uppercase font-semibold">Hit Rate@5</p>
-              <p className="text-base font-bold tabular-nums">64.0%</p>
+      {/* Strategy Cards */}
+      <div className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-${Math.min(strategies.length, 4)} gap-4`}>
+        {strategies.map((s) => {
+          const isBest = bestStrategy?.retrieval_strategy === s.retrieval_strategy;
+          return (
+            <div
+              key={s.retrieval_strategy}
+              className={`bg-[var(--color-bg-secondary)] rounded-xl p-4 border space-y-2 ${
+                isBest
+                  ? "border-[var(--color-primary)]/40 shadow-xs"
+                  : "border-[var(--color-border)]"
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  {isBest && <Award size={15} className="text-emerald-500" />}
+                  <span className="font-semibold text-sm text-[var(--color-text)]">
+                    {strategyLabel(s.retrieval_strategy)}
+                  </span>
+                </div>
+                {isBest ? (
+                  <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 font-bold text-[9px] uppercase">
+                    Leader
+                  </span>
+                ) : (
+                  <span
+                    className="w-2.5 h-2.5 rounded-full"
+                    style={{ backgroundColor: strategyColor(s.retrieval_strategy) }}
+                  />
+                )}
+              </div>
+              <p className="text-xs text-[var(--color-text-tertiary)]">
+                {STRATEGY_DESCRIPTIONS[s.retrieval_strategy] ?? s.retrieval_strategy}
+              </p>
+              <div className="grid grid-cols-3 gap-2 pt-2 border-t border-[var(--color-border)]">
+                <div>
+                  <p className="text-[10px] text-[var(--color-text-tertiary)] uppercase font-semibold">P@5</p>
+                  <p className={`text-base font-bold tabular-nums ${isBest ? "text-emerald-600 dark:text-emerald-400" : ""}`}>
+                    {(s.metrics.precision_at_k * 100).toFixed(1)}%
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-[var(--color-text-tertiary)] uppercase font-semibold">MRR</p>
+                  <p className={`text-base font-bold tabular-nums ${isBest ? "text-emerald-600 dark:text-emerald-400" : ""}`}>
+                    {s.metrics.mrr.toFixed(3)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-[var(--color-text-tertiary)] uppercase font-semibold">N</p>
+                  <p className="text-base font-bold tabular-nums">{s.n_questions}</p>
+                </div>
+              </div>
             </div>
-            <div>
-              <p className="text-[10px] text-[var(--color-text-tertiary)] uppercase font-semibold">MRR</p>
-              <p className="text-base font-bold tabular-nums">0.590</p>
-            </div>
-            <div>
-              <p className="text-[10px] text-[var(--color-text-tertiary)] uppercase font-semibold">Avg Latency</p>
-              <p className="text-base font-bold tabular-nums text-amber-500">18 ms</p>
-            </div>
-          </div>
-        </div>
-
-        {/* Dense */}
-        <div className="bg-[var(--color-bg-secondary)] rounded-xl p-4 border border-[var(--color-border)] space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="font-semibold text-sm text-[var(--color-text)]">Dense pgvector</span>
-            <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: STRATEGY_COLORS.dense }} />
-          </div>
-          <p className="text-xs text-[var(--color-text-tertiary)]">Cosine semantic embedding search</p>
-          <div className="grid grid-cols-3 gap-2 pt-2 border-t border-[var(--color-border)]">
-            <div>
-              <p className="text-[10px] text-[var(--color-text-tertiary)] uppercase font-semibold">Hit Rate@5</p>
-              <p className="text-base font-bold tabular-nums">68.0%</p>
-            </div>
-            <div>
-              <p className="text-[10px] text-[var(--color-text-tertiary)] uppercase font-semibold">MRR</p>
-              <p className="text-base font-bold tabular-nums">0.650</p>
-            </div>
-            <div>
-              <p className="text-[10px] text-[var(--color-text-tertiary)] uppercase font-semibold">Avg Latency</p>
-              <p className="text-base font-bold tabular-nums">52 ms</p>
-            </div>
-          </div>
-        </div>
-
-        {/* Hybrid RRF */}
-        <div className="bg-[var(--color-bg-secondary)] rounded-xl p-4 border border-[var(--color-border)] space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="font-semibold text-sm text-[var(--color-text)]">Hybrid RRF</span>
-            <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: STRATEGY_COLORS.hybrid }} />
-          </div>
-          <p className="text-xs text-[var(--color-text-tertiary)]">Fused reciprocal rank scoring</p>
-          <div className="grid grid-cols-3 gap-2 pt-2 border-t border-[var(--color-border)]">
-            <div>
-              <p className="text-[10px] text-[var(--color-text-tertiary)] uppercase font-semibold">Hit Rate@5</p>
-              <p className="text-base font-bold tabular-nums">79.0%</p>
-            </div>
-            <div>
-              <p className="text-[10px] text-[var(--color-text-tertiary)] uppercase font-semibold">MRR</p>
-              <p className="text-base font-bold tabular-nums">0.730</p>
-            </div>
-            <div>
-              <p className="text-[10px] text-[var(--color-text-tertiary)] uppercase font-semibold">Avg Latency</p>
-              <p className="text-base font-bold tabular-nums">68 ms</p>
-            </div>
-          </div>
-        </div>
-
-        {/* Hybrid + Reranker */}
-        <div className="bg-[var(--color-bg-secondary)] rounded-xl p-4 border border-[var(--color-primary)]/40 shadow-xs space-y-2">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5">
-              <Award size={15} className="text-emerald-500" />
-              <span className="font-semibold text-sm text-[var(--color-text)]">Hybrid + Reranker</span>
-            </div>
-            <span className="px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-600 font-bold text-[9px] uppercase">
-              Leader
-            </span>
-          </div>
-          <p className="text-xs text-[var(--color-text-tertiary)]">Cross-Encoder contextual re-scoring</p>
-          <div className="grid grid-cols-3 gap-2 pt-2 border-t border-[var(--color-border)]">
-            <div>
-              <p className="text-[10px] text-[var(--color-text-tertiary)] uppercase font-semibold">Hit Rate@5</p>
-              <p className="text-base font-bold tabular-nums text-emerald-600 dark:text-emerald-400">87.0%</p>
-            </div>
-            <div>
-              <p className="text-[10px] text-[var(--color-text-tertiary)] uppercase font-semibold">MRR</p>
-              <p className="text-base font-bold tabular-nums text-emerald-600 dark:text-emerald-400">0.810</p>
-            </div>
-            <div>
-              <p className="text-[10px] text-[var(--color-text-tertiary)] uppercase font-semibold">Avg Latency</p>
-              <p className="text-base font-bold tabular-nums">155 ms</p>
-            </div>
-          </div>
-        </div>
+          );
+        })}
       </div>
 
       {/* Main Interactive Charts View */}
       {activeTab === "metrics" ? (
-        /* Tab 1: Retrieval & Ragas Metrics Bar Chart */
         <div className="bg-[var(--color-bg-secondary)] rounded-xl p-6 border border-[var(--color-border)] space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="font-semibold flex items-center gap-2 text-base">
@@ -350,12 +337,12 @@ export default function Evaluation() {
               <span>Comparative Performance by Retrieval Strategy</span>
             </h3>
             <span className="text-xs text-[var(--color-text-tertiary)]">
-              Higher is better • Normalized 0.0 to 1.0
+              Higher is better &bull; Normalized 0.0 to 1.0
             </span>
           </div>
 
           <ResponsiveContainer width="100%" height={340}>
-            <BarChart data={COMPARISON_METRICS} barGap={3} barCategoryGap="18%">
+            <BarChart data={comparisonMetrics} barGap={3} barCategoryGap="18%">
               <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" vertical={false} />
               <XAxis
                 dataKey="metric"
@@ -377,20 +364,19 @@ export default function Evaluation() {
                 }}
               />
               <Legend wrapperStyle={{ fontSize: "12px", paddingTop: "12px" }} />
-              <Bar dataKey="bm25" name="BM25 Sparse" fill={STRATEGY_COLORS.bm25} radius={[4, 4, 0, 0]} />
-              <Bar dataKey="dense" name="Dense Vector" fill={STRATEGY_COLORS.dense} radius={[4, 4, 0, 0]} />
-              <Bar dataKey="hybrid" name="Hybrid RRF" fill={STRATEGY_COLORS.hybrid} radius={[4, 4, 0, 0]} />
-              <Bar
-                dataKey="hybrid_rerank"
-                name="Hybrid + Reranker"
-                fill={STRATEGY_COLORS.hybrid_rerank}
-                radius={[4, 4, 0, 0]}
-              />
+              {strategyKeys.map((key) => (
+                <Bar
+                  key={key}
+                  dataKey={key}
+                  name={strategyLabel(key)}
+                  fill={strategyColor(key)}
+                  radius={[4, 4, 0, 0]}
+                />
+              ))}
             </BarChart>
           </ResponsiveContainer>
         </div>
       ) : (
-        /* Tab 2: Latency vs. Accuracy Tradeoff Curve */
         <div className="bg-[var(--color-bg-secondary)] rounded-xl p-6 border border-[var(--color-border)] space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
@@ -399,161 +385,167 @@ export default function Evaluation() {
                 <span>Pareto Frontier: Latency vs. Retrieval Accuracy</span>
               </h3>
               <p className="text-xs text-[var(--color-text-tertiary)] mt-0.5">
-                Hit Rate @ 5 (%) on Y-axis vs. Query Latency (ms) on X-axis
+                P@5 (%) on Y-axis vs. Query Latency (ms) on X-axis
               </p>
             </div>
-            <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600">
-              Optimal Frontier: Hybrid + Reranker
-            </span>
+            {bestStrategy && (
+              <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600">
+                Optimal: {strategyLabel(bestStrategy.retrieval_strategy)}
+              </span>
+            )}
           </div>
 
-          <ResponsiveContainer width="100%" height={340}>
-            <LineChart data={TRADEOFF_DATA} margin={{ top: 20, right: 30, left: 10, bottom: 20 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
-              <XAxis
-                dataKey="latency"
-                type="number"
-                domain={[0, 180]}
-                unit="ms"
-                tick={{ fontSize: 12, fill: "var(--color-text-secondary)" }}
-                label={{
-                  value: "Average Retrieval Latency (ms)",
-                  position: "insideBottom",
-                  offset: -12,
-                  fill: "var(--color-text-secondary)",
-                  fontSize: 12,
-                }}
-              />
-              <YAxis
-                dataKey="accuracy"
-                type="number"
-                domain={[50, 100]}
-                unit="%"
-                tick={{ fontSize: 12, fill: "var(--color-text-secondary)" }}
-                label={{
-                  value: "Hit Rate @ 5 (%)",
-                  angle: -90,
-                  position: "insideLeft",
-                  fill: "var(--color-text-secondary)",
-                  fontSize: 12,
-                }}
-              />
-              <Tooltip
-                formatter={(val, name) => [
-                  name === "accuracy" ? `${val}%` : `${val} ms`,
-                  name === "accuracy" ? "Hit Rate @ 5" : "Latency",
-                ]}
-                labelFormatter={(_label, payload) =>
-                  payload && payload[0]
-                    ? `${(payload[0].payload as TradeoffPoint).strategy}`
-                    : ""
-                }
-                contentStyle={{
-                  backgroundColor: "var(--color-bg)",
-                  border: "1px solid var(--color-border)",
-                  borderRadius: "10px",
-                  fontSize: "12px",
-                }}
-              />
-              <Line
-                type="monotone"
-                dataKey="accuracy"
-                name="Hit Rate @ 5"
-                stroke="var(--color-primary)"
-                strokeWidth={3}
-                dot={{ r: 6, fill: "var(--color-primary)" }}
-                activeDot={{ r: 8 }}
-              />
-            </LineChart>
-          </ResponsiveContainer>
+          {tradeoffData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={340}>
+              <LineChart data={tradeoffData} margin={{ top: 20, right: 30, left: 10, bottom: 20 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
+                <XAxis
+                  dataKey="latency"
+                  type="number"
+                  unit="ms"
+                  tick={{ fontSize: 12, fill: "var(--color-text-secondary)" }}
+                  label={{
+                    value: "Average Retrieval Latency (ms)",
+                    position: "insideBottom",
+                    offset: -12,
+                    fill: "var(--color-text-secondary)",
+                    fontSize: 12,
+                  }}
+                />
+                <YAxis
+                  dataKey="accuracy"
+                  type="number"
+                  unit="%"
+                  tick={{ fontSize: 12, fill: "var(--color-text-secondary)" }}
+                  label={{
+                    value: "P@5 (%)",
+                    angle: -90,
+                    position: "insideLeft",
+                    fill: "var(--color-text-secondary)",
+                    fontSize: 12,
+                  }}
+                />
+                <Tooltip
+                  formatter={(val: number, name: string) => [
+                    name === "accuracy" ? `${val}%` : `${val} ms`,
+                    name === "accuracy" ? "P@5" : "Latency",
+                  ]}
+                  labelFormatter={(_label, payload) => {
+                    const item = payload?.[0]?.payload as TradeoffPoint | undefined;
+                    return item?.strategy ?? "";
+                  }}
+                  contentStyle={{
+                    backgroundColor: "var(--color-bg)",
+                    border: "1px solid var(--color-border)",
+                    borderRadius: "10px",
+                    fontSize: "12px",
+                  }}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="accuracy"
+                  name="P@5"
+                  stroke="var(--color-primary)"
+                  strokeWidth={3}
+                  dot={{ r: 6, fill: "var(--color-primary)" }}
+                  activeDot={{ r: 8 }}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          ) : (
+            <p className="text-sm text-[var(--color-text-tertiary)] py-8 text-center">
+              Latency data not available. Run experiments with stage-level timing to populate.
+            </p>
+          )}
         </div>
       )}
 
       {/* Latency Waterfall Breakdown */}
-      <div className="bg-[var(--color-bg-secondary)] rounded-xl p-6 border border-[var(--color-border)] space-y-4">
-        <div className="flex items-center justify-between">
-          <h3 className="font-semibold flex items-center gap-2">
-            <Zap size={18} className="text-amber-500" />
-            <span>Pipeline Stage Latency Breakdown (ms)</span>
-          </h3>
-          <span className="text-xs text-[var(--color-text-tertiary)]">
-            p50, p90, and p95 benchmarks
-          </span>
+      {latencyBreakdown.length > 0 && (
+        <div className="bg-[var(--color-bg-secondary)] rounded-xl p-6 border border-[var(--color-border)] space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="font-semibold flex items-center gap-2">
+              <Zap size={18} className="text-amber-500" />
+              <span>Pipeline Stage Latency Breakdown (ms)</span>
+            </h3>
+            <span className="text-xs text-[var(--color-text-tertiary)]">
+              p50, p90, and p95 benchmarks
+            </span>
+          </div>
+
+          <ResponsiveContainer width="100%" height={260}>
+            <BarChart data={latencyBreakdown} layout="vertical" barGap={2} barCategoryGap="16%">
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" horizontal={false} />
+              <XAxis type="number" unit="ms" tick={{ fontSize: 12, fill: "var(--color-text-secondary)" }} />
+              <YAxis
+                type="category"
+                dataKey="stage"
+                width={140}
+                tick={{ fontSize: 12, fill: "var(--color-text-secondary)" }}
+              />
+              <Tooltip
+                contentStyle={{
+                  backgroundColor: "var(--color-bg)",
+                  border: "1px solid var(--color-border)",
+                  borderRadius: "8px",
+                  fontSize: "12px",
+                }}
+              />
+              <Legend wrapperStyle={{ fontSize: "12px" }} />
+              <Bar dataKey="p50" name="p50" fill="#6366f1" radius={[0, 4, 4, 0]} />
+              <Bar dataKey="p90" name="p90" fill="#a78bfa" radius={[0, 4, 4, 0]} />
+              <Bar dataKey="p95" name="p95" fill="#c4b5fd" radius={[0, 4, 4, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
         </div>
+      )}
 
-        <ResponsiveContainer width="100%" height={260}>
-          <BarChart data={LATENCY_BREAKDOWN} layout="vertical" barGap={2} barCategoryGap="16%">
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" horizontal={false} />
-            <XAxis type="number" unit="ms" tick={{ fontSize: 12, fill: "var(--color-text-secondary)" }} />
-            <YAxis
-              type="category"
-              dataKey="stage"
-              width={120}
-              tick={{ fontSize: 12, fill: "var(--color-text-secondary)" }}
-            />
-            <Tooltip
-              contentStyle={{
-                backgroundColor: "var(--color-bg)",
-                border: "1px solid var(--color-border)",
-                borderRadius: "8px",
-                fontSize: "12px",
-              }}
-            />
-            <Legend wrapperStyle={{ fontSize: "12px" }} />
-            <Bar dataKey="p50" name="p50" fill="#6366f1" radius={[0, 4, 4, 0]} />
-            <Bar dataKey="p90" name="p90" fill="#a78bfa" radius={[0, 4, 4, 0]} />
-            <Bar dataKey="p95" name="p95" fill="#c4b5fd" radius={[0, 4, 4, 0]} />
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
-
-      {/* Category Breakdown Table */}
+      {/* Metrics Detail Table */}
       <div className="bg-[var(--color-bg-secondary)] rounded-xl p-6 border border-[var(--color-border)] space-y-4">
         <h3 className="font-semibold flex items-center gap-2">
           <Layers size={18} className="text-[var(--color-primary)]" />
-          <span>Category Performance Breakdown (MRR)</span>
+          <span>Full Metrics Comparison</span>
         </h3>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-[var(--color-text-secondary)] border-b border-[var(--color-border)] pb-2">
-                <th className="px-4 py-2 font-medium">Domain Category</th>
-                <th className="px-4 py-2 font-medium">BM25</th>
-                <th className="px-4 py-2 font-medium">Dense</th>
-                <th className="px-4 py-2 font-medium">Hybrid</th>
-                <th className="px-4 py-2 font-medium">Hybrid+Reranker</th>
-                <th className="px-4 py-2 font-medium">Optimal Engine</th>
+                <th className="px-4 py-2 font-medium">Metric</th>
+                {strategies.map((s) => (
+                  <th key={s.retrieval_strategy} className="px-4 py-2 font-medium">
+                    {strategyLabel(s.retrieval_strategy)}
+                  </th>
+                ))}
+                <th className="px-4 py-2 font-medium">Best</th>
               </tr>
             </thead>
             <tbody>
-              {CATEGORY_BENCHMARKS.map((c) => {
-                const best = Math.max(c.bm25, c.dense, c.hybrid, c.hybrid_rerank);
-                const winnerLabel =
-                  best === c.hybrid_rerank
-                    ? "Hybrid + Reranker"
-                    : best === c.hybrid
-                      ? "Hybrid"
-                      : best === c.bm25
-                        ? "BM25"
-                        : "Dense";
+              {comparisonMetrics.map((row) => {
+                const values = strategyKeys.map(
+                  (k) => (typeof row[k] === "number" ? row[k] : 0) as number,
+                );
+                const best = Math.max(...values);
+                const bestIdx = values.indexOf(best);
                 return (
-                  <tr key={c.category} className="border-t border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)]/50 transition-colors">
-                    <td className="px-4 py-2.5 font-medium">{c.category}</td>
-                    <td className="px-4 py-2.5 tabular-nums text-amber-600 dark:text-amber-400 font-mono">
-                      {c.bm25.toFixed(3)}
-                    </td>
-                    <td className="px-4 py-2.5 tabular-nums text-slate-500 font-mono">
-                      {c.dense.toFixed(3)}
-                    </td>
-                    <td className="px-4 py-2.5 tabular-nums text-indigo-500 font-mono">
-                      {c.hybrid.toFixed(3)}
-                    </td>
-                    <td className="px-4 py-2.5 tabular-nums text-emerald-600 dark:text-emerald-400 font-bold font-mono">
-                      {c.hybrid_rerank.toFixed(3)}
-                    </td>
+                  <tr
+                    key={row.metric}
+                    className="border-t border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)]/50 transition-colors"
+                  >
+                    <td className="px-4 py-2.5 font-medium">{row.metric}</td>
+                    {strategyKeys.map((k, i) => (
+                      <td
+                        key={k}
+                        className={`px-4 py-2.5 tabular-nums font-mono ${
+                          i === bestIdx ? "font-bold text-emerald-600 dark:text-emerald-400" : ""
+                        }`}
+                        style={i !== bestIdx ? { color: strategyColor(k) } : undefined}
+                      >
+                        {typeof row[k] === "number" ? (row[k] as number).toFixed(3) : "—"}
+                      </td>
+                    ))}
                     <td className="px-4 py-2.5">
                       <span className="px-2 py-0.5 bg-[var(--color-success)]/10 text-[var(--color-success)] text-xs font-semibold rounded">
-                        {winnerLabel}
+                        {strategyLabel(strategyKeys[bestIdx])}
                       </span>
                     </td>
                   </tr>
@@ -564,84 +556,15 @@ export default function Evaluation() {
         </div>
       </div>
 
-      {/* Win/Loss Question Results */}
-      <div className="bg-[var(--color-bg-secondary)] rounded-xl p-6 border border-[var(--color-border)] space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="font-semibold flex items-center gap-2">
-            <CheckCircle size={18} className="text-[var(--color-primary)]" />
-            <span>Empirical Win / Loss Case Study</span>
-          </h3>
-          <div className="flex items-center gap-2">
-            <Filter size={14} className="text-[var(--color-text-tertiary)]" />
-            <select
-              value={categoryFilter}
-              onChange={(e) => setCategoryFilter(e.target.value)}
-              className="bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg px-2.5 py-1 text-xs text-[var(--color-text)] focus:outline-none"
-            >
-              {categories.map((c) => (
-                <option key={c} value={c}>
-                  {c === "all" ? "All Categories" : c}
-                </option>
-              ))}
-            </select>
-          </div>
+      {/* Run Info */}
+      <div className="flex items-center gap-3 p-3.5 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-xs text-[var(--color-text-secondary)]">
+        <div className="p-1.5 rounded-lg bg-[var(--color-primary)]/10 text-[var(--color-primary)] shrink-0">
+          <Award size={16} />
         </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-[var(--color-text-secondary)] border-b border-[var(--color-border)] pb-2">
-                <th className="px-4 py-2 font-medium">Evaluation Question</th>
-                <th className="px-4 py-2 font-medium">Category</th>
-                <th className="px-4 py-2 font-medium">BM25</th>
-                <th className="px-4 py-2 font-medium">Dense</th>
-                <th className="px-4 py-2 font-medium">Hybrid</th>
-                <th className="px-4 py-2 font-medium">H+Reranker</th>
-                <th className="px-4 py-2 font-medium">Leader</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredWinLoss.map((w, i) => (
-                <tr key={i} className="border-t border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)]/50 transition-colors">
-                  <td className="px-4 py-2.5 max-w-sm truncate font-medium">
-                    {w.question}
-                  </td>
-                  <td className="px-4 py-2.5 text-xs text-[var(--color-text-tertiary)]">{w.category}</td>
-                  <td className="px-4 py-2.5 tabular-nums font-mono text-xs text-amber-600 dark:text-amber-400">
-                    {w.bm25_score.toFixed(3)}
-                  </td>
-                  <td className="px-4 py-2.5 tabular-nums font-mono text-xs text-slate-500">
-                    {w.dense_score.toFixed(3)}
-                  </td>
-                  <td className="px-4 py-2.5 tabular-nums font-mono text-xs text-indigo-500">
-                    {w.hybrid_score.toFixed(3)}
-                  </td>
-                  <td className="px-4 py-2.5 tabular-nums font-mono text-xs text-emerald-600 dark:text-emerald-400 font-bold">
-                    {w.hybrid_rerank_score.toFixed(3)}
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <span
-                      className="px-2 py-0.5 text-xs font-semibold rounded"
-                      style={{
-                        backgroundColor: `${
-                          STRATEGY_COLORS[w.winner as keyof typeof STRATEGY_COLORS]
-                        }20`,
-                        color: STRATEGY_COLORS[w.winner as keyof typeof STRATEGY_COLORS],
-                      }}
-                    >
-                      {w.winner === "hybrid_rerank"
-                        ? "H+Reranker"
-                        : w.winner === "hybrid"
-                          ? "Hybrid"
-                          : w.winner === "bm25"
-                            ? "BM25"
-                            : "Dense"}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div>
+          <span className="font-semibold text-[var(--color-text)]">Experiment Data:</span>{" "}
+          Results from stored evaluation runs. Re-run experiments to update metrics.
+          Last run: {strategies[0]?.created_at ? new Date(strategies[0].created_at).toLocaleDateString() : "unknown"}.
         </div>
       </div>
     </div>

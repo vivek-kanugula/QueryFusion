@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { type SSEEvent, type StreamQueryOptions, streamQuery } from "../lib/api";
 
 export interface QueryState {
@@ -30,6 +30,12 @@ export function useSSEQuery(initialState?: Partial<QueryState>) {
     isStreaming: false,
   }));
   const controllerRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    return () => {
+      controllerRef.current?.abort();
+    };
+  }, []);
 
   const execute = useCallback(
     (

@@ -8,11 +8,12 @@ and partial matching in BM25 indices.
 from __future__ import annotations
 
 import re
+import threading
 
 import Stemmer as PyStemmer
 
-TECH_PATTERN = re.compile(r"\b([A-Za-z0-9]+(?:[-_.:/\\]+[A-Za-z0-9]+)+)\b")
-WORD_PATTERN = re.compile(r"[a-zA-Z0-9]+")
+TECH_PATTERN = re.compile(r"(?u)\b([^\W_]+(?:[-_.:/\\]+[^\W_]+)+)\b")
+WORD_PATTERN = re.compile(r"[^\W_]+")
 
 ENGLISH_STOPWORDS = frozenset(
     {
@@ -94,14 +95,13 @@ ENGLISH_STOPWORDS = frozenset(
     }
 )
 
-_stemmer: PyStemmer.Stemmer | None = None
+_local = threading.local()
 
 
 def get_stemmer() -> PyStemmer.Stemmer:
-    global _stemmer
-    if _stemmer is None:
-        _stemmer = PyStemmer.Stemmer("english")
-    return _stemmer
+    if not hasattr(_local, "stemmer") or _local.stemmer is None:
+        _local.stemmer = PyStemmer.Stemmer("english")
+    return _local.stemmer
 
 
 def expand_technical_tokens(text: str) -> str:

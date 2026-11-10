@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from xml.sax.saxutils import quoteattr
 
 from hybrid_rag.generation.cache import (
     LLMCache,
@@ -75,8 +76,8 @@ def format_context(candidates: list[CandidateResult]) -> str:
         raw_text = c.content or c.chunk_id
         text = escape_delimiter_tags(raw_text)
         parts.append(
-            f'<context_passage id="{label}" chunk_id="{c.chunk_id}" doc_id="{doc_id}">\n'
-            f"{label} (chunk: {c.chunk_id}, doc: {doc_id})\n{text}\n"
+            f"<context_passage id={quoteattr(label)} chunk_id={quoteattr(str(c.chunk_id))} doc_id={quoteattr(str(doc_id))}>\n"
+            f"{label} (chunk: {escape_delimiter_tags(str(c.chunk_id))}, doc: {escape_delimiter_tags(str(doc_id))})\n{text}\n"
             f"</context_passage>"
         )
     inner = "\n\n".join(parts)
@@ -84,7 +85,15 @@ def format_context(candidates: list[CandidateResult]) -> str:
 
 
 def build_citation_map(candidates: list[CandidateResult]) -> dict[str, CandidateResult]:
-    return {f"[C{i}]": c for i, c in enumerate(candidates, 1)}
+    mapping: dict[str, CandidateResult] = {}
+    for i, c in enumerate(candidates, 1):
+        mapping[f"[C{i}]"] = c
+        mapping[f"C{i}"] = c
+        mapping[f"[{i}]"] = c
+        mapping[str(i)] = c
+        if c.chunk_id:
+            mapping[str(c.chunk_id)] = c
+    return mapping
 
 
 def format_conversation_history(chat_history: list[dict[str, str]] | None) -> str:
@@ -162,15 +171,21 @@ def generate_answer(
     prompt = build_generation_prompt(question, candidates, chat_history=chat_history)
     schema_json = _schema_json()
     cache_model_tag = f"{provider}:{model_name}" if provider else model_name
-    key = cache_key(cache_model_tag, prompt, schema_json, temperature)
+    key = cache_key(
+        cache_model_tag,
+        prompt,
+        schema_json,
+        temperature,
+        system_instruction=GENERATION_SYSTEM_INSTRUCTION,
+    )
 
     if llm_cache is not None:
         cached = llm_cache.get(key)
         if cached is not None:
             return GroundedAnswer.model_validate_json(cached), True
 
-    if rate_limiter is not None:
-        rate_limiter.acquire()
+    if rate_limiter is not None and not rate_limiter.acquire():
+        return _fallback_answer("Rate limit exceeded."), False
 
     raw_response = retry_with_backoff(
         lambda: _dispatch_generation(model_name, prompt, temperature, provider=provider),
@@ -178,7 +193,7 @@ def generate_answer(
 
     answer = _parse_response(raw_response, candidates)
 
-    if llm_cache is not None:
+    if llm_cache is not None and not answer.is_fallback and bool(answer.answer and answer.answer.strip()):
         llm_cache.put(key, answer.model_dump_json(), cache_model_tag)
 
     return answer, False
@@ -197,44 +212,76 @@ def _call_gemini(model_name: str, prompt: str, temperature: float) -> str:
             "system_instruction": GENERATION_SYSTEM_INSTRUCTION,
         },
     )
-    return response.text
+    return response.text or ""
 
 
-def _parse_response(raw: str, candidates: list[CandidateResult]) -> GroundedAnswer:
+def _parse_response(raw: str | None, candidates: list[CandidateResult]) -> GroundedAnswer:
+    if not raw or not raw.strip():
+        return _fallback_answer("Empty or filtered LLM response.")
+
     try:
         data = json.loads(raw)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, TypeError):
         return _fallback_answer("Failed to parse LLM response as JSON.")
+
+    if not isinstance(data, dict):
+        return _fallback_answer("Failed to parse LLM response as JSON.")
+
+    if "error" in data or ("message" in data and "answer" not in data):
+        err_msg = str(data.get("error") or data.get("message"))
+        return _fallback_answer(f"LLM returned error response: {err_msg}")
+
+    has_context = bool(data.get("has_sufficient_context", True))
+    fallback = data.get("fallback_reason")
+    if fallback is not None:
+        fallback = str(fallback)
+
+    if not has_context:
+        if not fallback:
+            fallback = (
+                "The retrieved context does not contain sufficient information to answer this question."
+            )
+        return _fallback_answer(fallback)
+
+    raw_answer = data.get("answer")
+    if raw_answer is None or not str(raw_answer).strip():
+        return _fallback_answer("LLM returned empty answer.")
 
     citation_map = build_citation_map(candidates)
 
+    raw_citations = data.get("citations")
+    if not isinstance(raw_citations, list):
+        raw_citations = []
+
     citations: list[Citation] = []
-    for c in data.get("citations", []):
-        cid = c.get("citation_id", "")
+    for c in raw_citations:
+        if not isinstance(c, dict):
+            continue
+        cid = str(c.get("citation_id") or c.get("id") or "")
+        target_chunk_id = str(c.get("chunk_id") or "")
+        candidate = None
         if cid in citation_map:
             candidate = citation_map[cid]
+        elif target_chunk_id and target_chunk_id in citation_map:
+            candidate = citation_map[target_chunk_id]
+
+        if candidate is not None:
+            marker = cid if cid.startswith("[C") else f"[C{candidate.rank}]" if hasattr(candidate, "rank") and candidate.rank else (f"[{cid}]" if cid else f"[C1]")
+            quote = str(c.get("evidence_quote") or c.get("text") or "")
             citations.append(
                 Citation(
-                    citation_id=cid,
+                    citation_id=marker,
                     chunk_id=candidate.chunk_id,
-                    document_id=candidate.metadata.get("document_id", ""),
-                    evidence_quote=c.get("evidence_quote", ""),
+                    document_id=candidate.metadata.get("document_id", "") if candidate.metadata else "",
+                    evidence_quote=quote,
                 )
             )
 
-    has_context = data.get("has_sufficient_context", True)
-    fallback = data.get("fallback_reason")
-
-    if not has_context and not fallback:
-        fallback = (
-            "The retrieved context does not contain sufficient information to answer this question."
-        )
-
     return GroundedAnswer(
-        answer=data.get("answer", ""),
+        answer=str(raw_answer),
         citations=citations,
-        has_sufficient_context=has_context,
-        fallback_reason=fallback,
+        has_sufficient_context=True,
+        fallback_reason=None,
     )
 
 

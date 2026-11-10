@@ -102,6 +102,23 @@ def test_batch_delete_empty():
     assert response.status_code == 400
 
 
+def test_batch_delete_invalid_uuid():
+    response = client.post(
+        "/api/v1/documents/batch-delete",
+        json={"document_ids": ["not-a-valid-uuid"]},
+    )
+    assert response.status_code == 400
+    assert "Invalid UUID" in response.json()["detail"]
+
+
+def test_batch_delete_malformed_body():
+    response = client.post(
+        "/api/v1/documents/batch-delete",
+        json={"document_ids": "not-a-list"},
+    )
+    assert response.status_code == 422
+
+
 def test_consistency_check():
     mock_session = MagicMock()
     app.dependency_overrides[get_db] = _override_db(mock_session)

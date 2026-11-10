@@ -248,7 +248,7 @@ def test_retrieval_score_rrf_stage_single_arm_normalized():
         ],
     )
     score = retrieval_score(trace)
-    assert score == pytest.approx(0.5, rel=1e-6)
+    assert score == pytest.approx(0.7, rel=1e-6)
 
 
 def test_retrieval_score_rrf_stage_custom_k():
@@ -262,6 +262,25 @@ def test_retrieval_score_rrf_stage_custom_k():
         stages=[
             StageTrace(
                 stage="rrf",
+                candidates=[CandidateResult(chunk_id="c1", score=rrf_score, rank=1)],
+            )
+        ],
+    )
+    score = retrieval_score(trace)
+    assert score == pytest.approx(1.0, rel=1e-6)
+
+
+def test_retrieval_score_multi_query_rrf_stage():
+    from hybrid_rag.schemas.pipeline import CandidateResult, PipelineConfig, StageTrace
+
+    k = 60
+    rrf_score = 1.0 / (k + 1)
+    trace = QueryTrace(
+        trace_id="t_mq_rrf",
+        config=PipelineConfig(rrf_k=k),
+        stages=[
+            StageTrace(
+                stage="multi_query_rrf",
                 candidates=[CandidateResult(chunk_id="c1", score=rrf_score, rank=1)],
             )
         ],

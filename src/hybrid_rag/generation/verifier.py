@@ -144,19 +144,29 @@ def verify_citations(
             all_supported=False,
         )
 
-    model_name = model or settings.gemini_model
+    model_name = (
+        model
+        or getattr(settings, "gemini_verifier_model", None)
+        or settings.gemini_model
+    )
     prompt = build_verification_prompt(answer, candidates)
     schema_json = "verification_claims_array"
     cache_model_tag = f"{provider}:{model_name}" if provider else model_name
-    key = cache_key(cache_model_tag, prompt, schema_json, temperature)
+    key = cache_key(
+        cache_model_tag,
+        prompt,
+        schema_json,
+        temperature,
+        system_instruction=VERIFICATION_SYSTEM_INSTRUCTION,
+    )
 
     if llm_cache is not None:
         cached = llm_cache.get(key)
         if cached is not None:
             return _parse_verification(cached)
 
-    if rate_limiter is not None:
-        rate_limiter.acquire()
+    if rate_limiter is not None and not rate_limiter.acquire():
+        return VerificationResult(claims=[], citation_coverage=0.0, all_supported=False)
 
     raw = retry_with_backoff(
         lambda: _dispatch_verification(model_name, prompt, temperature, provider=provider),
@@ -164,7 +174,7 @@ def verify_citations(
 
     result = _parse_verification(raw)
 
-    if llm_cache is not None:
+    if llm_cache is not None and result.claims:
         llm_cache.put(key, json.dumps([c.model_dump() for c in result.claims]), cache_model_tag)
 
     return result
@@ -183,13 +193,16 @@ def _call_gemini_verification(model_name: str, prompt: str, temperature: float) 
             "system_instruction": VERIFICATION_SYSTEM_INSTRUCTION,
         },
     )
-    return response.text
+    return response.text or ""
 
 
-def _parse_verification(raw: str) -> VerificationResult:
+def _parse_verification(raw: str | None) -> VerificationResult:
+    if not raw or not raw.strip():
+        return VerificationResult(claims=[], citation_coverage=0.0, all_supported=False)
+
     try:
         data = json.loads(raw)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, TypeError):
         return VerificationResult(claims=[], citation_coverage=0.0, all_supported=False)
 
     if isinstance(data, dict) and "claims" in data:
@@ -200,7 +213,9 @@ def _parse_verification(raw: str) -> VerificationResult:
 
     claims: list[ClaimVerification] = []
     for item in data:
-        verdict_str = item.get("verdict", "UNSUPPORTED").upper()
+        if not isinstance(item, dict):
+            continue
+        verdict_str = str(item.get("verdict") or "UNSUPPORTED").upper()
         try:
             verdict = VerificationVerdict(verdict_str)
         except ValueError:
@@ -208,11 +223,11 @@ def _parse_verification(raw: str) -> VerificationResult:
 
         claims.append(
             ClaimVerification(
-                claim_text=item.get("claim_text", ""),
-                citation_id=item.get("citation_id"),
+                claim_text=str(item.get("claim_text") or ""),
+                citation_id=str(item["citation_id"]) if item.get("citation_id") is not None else None,
                 verdict=verdict,
-                evidence_quote=item.get("evidence_quote"),
-                explanation=item.get("explanation", ""),
+                evidence_quote=str(item["evidence_quote"]) if item.get("evidence_quote") is not None else None,
+                explanation=str(item.get("explanation") or ""),
             )
         )
 

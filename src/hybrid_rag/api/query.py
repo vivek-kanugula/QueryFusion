@@ -2,32 +2,49 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import time
+from collections import defaultdict
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from pydantic import BaseModel, Field
 
 from hybrid_rag.core.trace_store import trace_store
-from hybrid_rag.db.engine import get_db
 from hybrid_rag.schemas.pipeline import PipelineConfig, QueryTrace
+from hybrid_rag.settings import settings
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/query",
     tags=["query"],
 )
 
+_request_counts: dict[str, list[float]] = defaultdict(list)
+_RATE_WINDOW = 60.0
+_RATE_LIMIT = 20
+
+
+def _format_error_message(exc: Exception) -> str:
+    if settings.is_production:
+        return "An internal error occurred during query processing."
+    import re
+
+    msg = str(exc)
+    return re.sub(r"://([^:]+):([^@]+)@", r"://\1:***@", msg)
+
 
 class QueryRequest(BaseModel):
-    question: str
+    question: str = Field(..., min_length=1)
     retrieval_strategy: str = "hybrid_rerank"
     chunking_strategy: str = "fixed"
-    alpha: float = 0.5
+    alpha: float = Field(default=0.5, ge=0.0, le=1.0)
     rerank_enabled: bool = True
     verify: bool = True
-    temperature: float = 0.0
+    temperature: float = Field(default=0.0, ge=0.0, le=2.0)
     document_ids: list[str] | None = None
     chat_history: list[dict[str, str]] | None = None
     model: str | None = None
@@ -40,11 +57,18 @@ def _sse_event(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
-@router.post("/stream")
-async def stream_query(request: QueryRequest, db: Session = Depends(get_db)):
-    async def event_stream():
-        import asyncio
+def _check_rate_limit(client_ip: str) -> None:
+    now = time.monotonic()
+    entries = _request_counts[client_ip]
+    _request_counts[client_ip] = [t for t in entries if now - t < _RATE_WINDOW]
+    if len(_request_counts[client_ip]) >= _RATE_LIMIT:
+        raise HTTPException(429, "Rate limit exceeded. Try again shortly.")
+    _request_counts[client_ip].append(now)
 
+
+@router.post("/stream")
+async def stream_query(request: QueryRequest):
+    async def event_stream():
         doc_ids = tuple(request.document_ids) if request.document_ids else None
         config = PipelineConfig(
             retrieval_strategy=request.retrieval_strategy,
@@ -53,6 +77,7 @@ async def stream_query(request: QueryRequest, db: Session = Depends(get_db)):
             rerank_enabled=request.rerank_enabled,
             temperature=request.temperature,
             document_ids=doc_ids,
+            expand_queries=request.query_expansion,
         )
 
         trace = QueryTrace(config=config, query=request.question)
@@ -88,9 +113,15 @@ async def stream_query(request: QueryRequest, db: Session = Depends(get_db)):
             from hybrid_rag.retrieval.bm25_store import get_bm25_store
             from hybrid_rag.retrieval.retriever import full_retrieve, multi_query_retrieve
 
-            yield _sse_event("stage", {"name": "dense"})
-            yield _sse_event("stage", {"name": "sparse"})
-            yield _sse_event("stage", {"name": "rrf"})
+            strat = (request.retrieval_strategy or "hybrid_rerank").lower()
+            if strat in ("dense", "dense_only"):
+                yield _sse_event("stage", {"name": "dense"})
+            elif strat in ("bm25", "bm25_only", "sparse"):
+                yield _sse_event("stage", {"name": "sparse"})
+            else:
+                yield _sse_event("stage", {"name": "dense"})
+                yield _sse_event("stage", {"name": "sparse"})
+                yield _sse_event("stage", {"name": "rrf"})
 
             start = time.perf_counter()
             bm25 = get_bm25_store()
@@ -100,7 +131,7 @@ async def stream_query(request: QueryRequest, db: Session = Depends(get_db)):
                     expanded_queries,
                     config,
                     bm25,
-                    db=db,
+                    db=None,
                 )
             else:
                 retrieval_trace = await asyncio.to_thread(
@@ -108,7 +139,7 @@ async def stream_query(request: QueryRequest, db: Session = Depends(get_db)):
                     search_query,
                     config,
                     bm25,
-                    db=db,
+                    db=None,
                 )
             retrieval_ms = (time.perf_counter() - start) * 1000
 
@@ -167,7 +198,7 @@ async def stream_query(request: QueryRequest, db: Session = Depends(get_db)):
                         crag_reason,
                         config,
                         bm25_store=bm25,
-                        db=db,
+                        db=None,
                         chat_history=request.chat_history,
                         model=request.model,
                         provider=request.provider,
@@ -228,10 +259,19 @@ async def stream_query(request: QueryRequest, db: Session = Depends(get_db)):
             )
 
         except Exception as exc:
-            yield _sse_event("error", {"message": str(exc)})
+            logger.error("Query pipeline error: %s", exc, exc_info=True)
+            yield _sse_event("error", {"message": _format_error_message(exc)})
+
+    async def timed_stream():
+        try:
+            async with asyncio.timeout(settings.request_timeout_seconds):
+                async for chunk in event_stream():
+                    yield chunk
+        except TimeoutError:
+            yield _sse_event("error", {"message": "Request timed out"})
 
     return StreamingResponse(
-        event_stream(),
+        timed_stream(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

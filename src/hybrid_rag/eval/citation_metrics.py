@@ -41,7 +41,7 @@ def compute_citation_metrics(
 
     accuracy = supported / total if total > 0 else 0.0
 
-    precision_denom = supported + misattributed + unsupported
+    precision_denom = supported + misattributed
     precision = supported / precision_denom if precision_denom > 0 else 0.0
 
     return CitationScores(

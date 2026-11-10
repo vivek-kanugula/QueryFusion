@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -53,6 +54,8 @@ def upload_document(
         file.file.close()
 
     data = b"".join(chunks_list)
+    if not data or len(data) == 0:
+        raise HTTPException(400, "File is empty")
 
     max_storage_bytes = settings.max_storage_mb * 1024 * 1024
     current_storage = db.query(func.coalesce(func.sum(Document.size_bytes), 0)).scalar()
@@ -68,7 +71,12 @@ def upload_document(
             "Delete existing documents first.",
         )
 
-    parsed = parse_file(data, file.filename or "unknown")
+    try:
+        parsed = parse_file(data, file.filename or "unknown")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(400, f"Failed to parse document: {e}")
 
     existing = db.query(Document).filter(Document.file_hash == parsed.content_hash).first()
     if existing:
@@ -100,7 +108,13 @@ def upload_document(
     else:
         chunks = chunk_fixed(parsed.full_text)
 
-    db_chunks = index_document(db, doc, chunks, chunking_strategy)
+    from sqlalchemy.exc import IntegrityError
+
+    try:
+        db_chunks = index_document(db, doc, chunks, chunking_strategy)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Duplicate file uploaded concurrently")
 
     return {
         "document_id": str(doc.id),
@@ -208,6 +222,15 @@ def get_storage_stats(db: Session = Depends(get_db)):
     )
     usage_percent = min(100.0, usage_percent)
 
+    hnsw_ceiling = 35000
+    ceiling_percent = round((chunk_count / hnsw_ceiling) * 100, 1) if hnsw_ceiling > 0 else 0.0
+    storage_warning = None
+    if chunk_count > hnsw_ceiling * 0.8:
+        storage_warning = (
+            f"Chunk count ({chunk_count}) approaching HNSW index ceiling (~{hnsw_ceiling}). "
+            "Consider deleting unused documents."
+        )
+
     return {
         "used_bytes": used_bytes,
         "used_mb": used_mb,
@@ -221,6 +244,9 @@ def get_storage_stats(db: Session = Depends(get_db)):
         "document_count": doc_count,
         "max_documents_count": settings.max_documents_count,
         "chunk_count": chunk_count,
+        "hnsw_ceiling": hnsw_ceiling,
+        "hnsw_usage_percent": ceiling_percent,
+        "storage_warning": storage_warning,
     }
 
 
@@ -345,16 +371,22 @@ def delete_single_document(
     return {"deleted": str(document_id)}
 
 
+class BatchDeleteRequest(BaseModel):
+    document_ids: list[str] = Field(default_factory=list)
+
+
 @router.post("/batch-delete")
 def batch_delete_documents(
-    body: dict,
+    body: BatchDeleteRequest,
     db: Session = Depends(get_db),
 ):
-    ids_raw = body.get("document_ids", [])
-    if not ids_raw:
+    if not body.document_ids:
         raise HTTPException(400, "document_ids required")
 
-    doc_ids = [uuid.UUID(i) for i in ids_raw]
+    try:
+        doc_ids = [uuid.UUID(str(i)) for i in body.document_ids]
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(400, "Invalid UUID in document_ids")
 
     docs = db.query(Document).filter(Document.id.in_(doc_ids)).all()
     if not docs:

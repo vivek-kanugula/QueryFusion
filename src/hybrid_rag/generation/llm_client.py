@@ -108,7 +108,14 @@ def _call_groq(
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = json.loads(resp.read().decode("utf-8"))
-        return str(data["choices"][0]["message"]["content"])
+        choices = data.get("choices")
+        if not choices or not isinstance(choices, list) or not isinstance(choices[0], dict):
+            return ""
+        message = choices[0].get("message")
+        if not message or not isinstance(message, dict):
+            return ""
+        content = message.get("content")
+        return str(content) if content is not None else ""
 
 
 def _call_ollama(
@@ -121,11 +128,13 @@ def _call_ollama(
     url = f"{host}/api/generate"
     payload: dict[str, Any] = {
         "model": model_name,
-        "prompt": f"{system_instruction}\n\n{prompt}",
+        "prompt": prompt,
         "format": "json",
         "stream": False,
         "options": {"temperature": temperature},
     }
+    if system_instruction:
+        payload["system"] = system_instruction
     req = urllib.request.Request(
         url,
         data=json.dumps(payload).encode("utf-8"),

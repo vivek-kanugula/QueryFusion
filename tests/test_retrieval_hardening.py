@@ -323,6 +323,9 @@ def test_stream_query_passes_hydrated_passages_to_generator():
 
     mock_db = MagicMock()
     mock_db.query.return_value.filter.return_value.all.return_value = [mock_chunk]
+    mock_session_maker = MagicMock()
+    mock_session_maker.return_value.__enter__.return_value = mock_db
+    mock_session_maker.return_value.__exit__.return_value = False
 
     app = FastAPI()
     app.include_router(router)
@@ -379,6 +382,7 @@ def test_stream_query_passes_hydrated_passages_to_generator():
 
     with (
         patch("hybrid_rag.retrieval.retriever.hybrid_retrieve", return_value=fake_retrieval_trace),
+        patch("hybrid_rag.db.engine.SessionLocal", mock_session_maker),
         patch(
             "hybrid_rag.generation.pipeline.generate_grounded_answer",
             side_effect=mock_generate_grounded_answer,

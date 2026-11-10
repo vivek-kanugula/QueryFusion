@@ -78,16 +78,15 @@ def execute_corrective_fallback(
     from hybrid_rag.retrieval.retriever import full_retrieve
     from hybrid_rag.schemas.pipeline import PipelineConfig as ConfigCls
 
-    # Broaden retrieval parameters for corrective pass
     corrected_config = ConfigCls(
         retrieval_strategy="hybrid_rerank",
         chunking_strategy=config.chunking_strategy,
-        alpha=0.5,  # Balanced hybrid
-        dense_top_k=max(config.dense_top_k, 15),
-        sparse_top_k=max(config.sparse_top_k, 15),
-        fusion_top_k=max(config.fusion_top_k, 12),
+        alpha=0.5,
+        dense_top_k=min(config.dense_top_k * 2, 60),
+        sparse_top_k=min(config.sparse_top_k * 2, 60),
+        fusion_top_k=min(30, config.fusion_top_k + 10),
         rerank_enabled=True,
-        rerank_top_k=max(config.rerank_top_k, 6),
+        rerank_top_k=min(config.rerank_top_k + 2, 10),
         document_ids=config.document_ids,
         temperature=temperature,
     )

@@ -284,6 +284,49 @@ def test_stream_query_error_handling(client):
     assert "DB connection failed" in error_data["message"]
 
 
+def test_stream_query_error_handling_sanitized_in_production(client, monkeypatch):
+    from hybrid_rag.settings import settings
+
+    monkeypatch.setattr(settings, "app_env", "production")
+    with (
+        patch(
+            "hybrid_rag.retrieval.bm25_store.get_bm25_store",
+            side_effect=RuntimeError("postgresql://admin:super_secret_pw@db.prod.internal/db"),
+        ),
+    ):
+        resp = client.post(
+            "/api/query/stream",
+            json={"question": "What is RAG?"},
+        )
+
+    events = _parse_sse(resp.text)
+    error_data = next(e[1] for e in events if e[0] == "error")
+    assert error_data["message"] == "An internal error occurred during query processing."
+    assert "super_secret_pw" not in error_data["message"]
+    assert "postgresql" not in error_data["message"]
+
+
+def test_stream_query_error_handling_sanitizes_credentials_in_dev(client, monkeypatch):
+    from hybrid_rag.settings import settings
+
+    monkeypatch.setattr(settings, "app_env", "development")
+    with (
+        patch(
+            "hybrid_rag.retrieval.bm25_store.get_bm25_store",
+            side_effect=RuntimeError("Failed postgresql://admin:secret123@localhost:5432/db connection"),
+        ),
+    ):
+        resp = client.post(
+            "/api/query/stream",
+            json={"question": "What is RAG?"},
+        )
+
+    events = _parse_sse(resp.text)
+    error_data = next(e[1] for e in events if e[0] == "error")
+    assert "secret123" not in error_data["message"]
+    assert "postgresql://admin:***@localhost:5432/db" in error_data["message"]
+
+
 def test_stream_response_headers(client):
     with patch(
         "hybrid_rag.retrieval.bm25_store.get_bm25_store",
@@ -358,37 +401,30 @@ def test_stream_without_rerank(mock_trace_store, client):
 
 
 @patch("hybrid_rag.api.query.trace_store")
-def test_stream_query_passes_db_session_to_full_retrieve(mock_trace_store, client):
-    from hybrid_rag.db.engine import get_db
-
+def test_stream_query_does_not_pass_thread_unsafe_db_to_worker(mock_trace_store, client):
     mock_trace = _make_mock_trace()
     mock_gen = _make_mock_gen_response()
-    mock_db = MagicMock()
 
-    client.app.dependency_overrides[get_db] = lambda: mock_db
-
-    try:
-        with (
-            patch(
-                "hybrid_rag.retrieval.retriever.full_retrieve",
-                return_value=mock_trace,
-            ) as mock_full_retrieve,
-            patch(
-                "hybrid_rag.generation.pipeline.generate_grounded_answer",
-                return_value=mock_gen,
-            ),
-            patch(
-                "hybrid_rag.retrieval.bm25_store.get_bm25_store",
-                return_value=MagicMock(),
-            ),
-        ):
-            resp = client.post(
-                "/api/query/stream",
-                json={"question": "What is RAG?"},
-            )
-            assert resp.status_code == 200
-            assert mock_full_retrieve.called
-            call_kwargs = mock_full_retrieve.call_args.kwargs
-            assert call_kwargs.get("db") is mock_db
-    finally:
-        client.app.dependency_overrides.clear()
+    with (
+        patch(
+            "hybrid_rag.retrieval.retriever.full_retrieve",
+            return_value=mock_trace,
+        ) as mock_full_retrieve,
+        patch(
+            "hybrid_rag.generation.pipeline.generate_grounded_answer",
+            return_value=mock_gen,
+        ),
+        patch(
+            "hybrid_rag.retrieval.bm25_store.get_bm25_store",
+            return_value=MagicMock(),
+        ),
+    ):
+        resp = client.post(
+            "/api/query/stream",
+            json={"question": "What is RAG?"},
+        )
+        assert resp.status_code == 200
+        assert mock_full_retrieve.called
+        call_kwargs = mock_full_retrieve.call_args.kwargs
+        # Worker must receive db=None so background worker threads instantiate isolated sessions safely
+        assert call_kwargs.get("db") is None

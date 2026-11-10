@@ -77,12 +77,16 @@ def index_document(
             logger.warning("DB rollback failed during compensating rollback", exc_info=True)
 
         try:
+            from hybrid_rag.db.engine import SessionLocal
             from hybrid_rag.retrieval.bm25_store import get_bm25_store
 
-            get_bm25_store().rebuild_from_db(db, strategy)
+            store = get_bm25_store()
+            with SessionLocal() as fresh_db:
+                store.rebuild_from_db(fresh_db, strategy)
         except Exception:
             logger.warning(
-                "BM25 index rebuild failed during compensating rollback for document %s",
+                "BM25 index rebuild failed during compensating rollback for document %s; "
+                "sparse retrieval may be stale until next restart",
                 document.id,
                 exc_info=True,
             )

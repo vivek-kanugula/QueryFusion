@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import sqlite3
 import threading
 import time
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def _default_cache_dir() -> Path:
@@ -22,9 +25,21 @@ def _default_cache_dir() -> Path:
     return fallback
 
 
-def cache_key(model: str, prompt: str, schema_json: str, temperature: float) -> str:
+def cache_key(
+    model: str,
+    prompt: str,
+    schema_json: str,
+    temperature: float,
+    system_instruction: str = "",
+) -> str:
     canonical = json.dumps(
-        {"model": model, "prompt": prompt, "schema": schema_json, "temperature": temperature},
+        {
+            "model": model,
+            "prompt": prompt,
+            "schema": schema_json,
+            "system_instruction": system_instruction,
+            "temperature": temperature,
+        },
         sort_keys=True,
         ensure_ascii=True,
     )
@@ -69,8 +84,14 @@ class LLMCache:
                     entry = session.get(LLMCacheEntry, key)
                     if entry is not None:
                         return entry.response
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(
+                    "PostgreSQL cache lookup failed: %s",
+                    e,
+                    exc_info=True,
+                )
+                if self._db_path is None:
+                    return None
 
         if self._db_path:
             with self._lock, sqlite3.connect(str(self._db_path)) as conn:
@@ -102,8 +123,21 @@ class LLMCache:
                         session.add(entry)
                     session.commit()
                     return
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(
+                    "PostgreSQL cache write failed: %s",
+                    e,
+                    exc_info=True,
+                )
+                if self._db_path is None:
+                    # In DB-first mode on container platforms (HF Spaces), skip creating ephemeral SQLite files
+                    return
+
+        if self._db_path is None:
+            self._dir = _default_cache_dir()
+            self._dir.mkdir(parents=True, exist_ok=True)
+            self._db_path = self._dir / "cache.db"
+            self._init_sqlite()
 
         if self._db_path:
             with self._lock, sqlite3.connect(str(self._db_path)) as conn:
@@ -112,6 +146,32 @@ class LLMCache:
                     "VALUES (?, ?, ?, ?)",
                     (key, response, model, time.time()),
                 )
+
+    def evict_stale(self, max_age_seconds: float = 7 * 86400) -> int:
+        cutoff = time.time() - max_age_seconds
+        evicted = 0
+        if self._use_db:
+            try:
+                from hybrid_rag.db.engine import SessionLocal
+                from hybrid_rag.models.cache import LLMCacheEntry
+
+                with SessionLocal() as session:
+                    evicted = (
+                        session.query(LLMCacheEntry)
+                        .filter(LLMCacheEntry.created_at < cutoff)
+                        .delete()
+                    )
+                    session.commit()
+            except Exception as e:
+                logger.warning("PostgreSQL cache eviction failed: %s", e, exc_info=True)
+
+        if self._db_path:
+            with self._lock, sqlite3.connect(str(self._db_path)) as conn:
+                cursor = conn.execute(
+                    "DELETE FROM llm_cache WHERE created_at < ?", (cutoff,)
+                )
+                evicted += cursor.rowcount
+        return evicted
 
     def clear(self) -> None:
         if self._use_db:
@@ -122,8 +182,8 @@ class LLMCache:
                 with SessionLocal() as session:
                     session.query(LLMCacheEntry).delete()
                     session.commit()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("PostgreSQL cache clear failed: %s", e, exc_info=True)
 
         if self._db_path:
             with self._lock, sqlite3.connect(str(self._db_path)) as conn:
@@ -137,23 +197,32 @@ class TokenBucketRateLimiter:
         self._tokens = capacity
         self._last_refill = time.monotonic()
         self._lock = threading.Lock()
+        self._condition = threading.Condition(self._lock)
 
     def acquire(self, timeout: float = 60.0) -> bool:
+        if self._rate <= 0:
+            return False
         deadline = time.monotonic() + timeout
-        while True:
-            with self._lock:
+        with self._condition:
+            while True:
                 self._refill()
                 if self._tokens >= 1.0:
                     self._tokens -= 1.0
                     return True
-            if time.monotonic() >= deadline:
-                return False
-            time.sleep(min(0.1, 1.0 / self._rate))
+                now = time.monotonic()
+                if now >= deadline:
+                    return False
+                needed = (1.0 - self._tokens) / self._rate
+                wait_time = min(needed, deadline - now)
+                if wait_time <= 0:
+                    wait_time = 0.001
+                self._condition.wait(timeout=wait_time)
 
     def _refill(self) -> None:
         now = time.monotonic()
         elapsed = now - self._last_refill
-        self._tokens = min(self._capacity, self._tokens + elapsed * self._rate)
+        if self._rate > 0:
+            self._tokens = min(self._capacity, self._tokens + elapsed * self._rate)
         self._last_refill = now
 
 
