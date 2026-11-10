@@ -12,16 +12,15 @@ Covers:
 
 import io
 import uuid
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-import pytest
 from fastapi.testclient import TestClient
 
 from hybrid_rag.app import app
 from hybrid_rag.core.jobs import JobStatus, job_registry
-from hybrid_rag.db.engine import SessionLocal, get_db
+from hybrid_rag.db.engine import SessionLocal
 from hybrid_rag.ingest.index_manager import process_document_background
-from hybrid_rag.models.document import Document, DocumentChunk
+from hybrid_rag.models.document import Document
 
 client = TestClient(app)
 
