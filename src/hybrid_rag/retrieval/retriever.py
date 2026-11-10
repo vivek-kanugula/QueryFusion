@@ -265,7 +265,14 @@ def hybrid_retrieve(
     trace = QueryTrace(query=query, config=config)
     total_start = time.perf_counter()
 
-    dense_future = _retrieval_pool.submit(dense_retrieve, query, config, None)
+    worker_db = None
+    if db is not None:
+        from sqlalchemy.orm import Session as _SqlAlchemySession
+
+        if not isinstance(db, _SqlAlchemySession):
+            worker_db = db
+
+    dense_future = _retrieval_pool.submit(dense_retrieve, query, config, worker_db)
     sparse_future = _retrieval_pool.submit(sparse_retrieve, query, config, bm25_store)
 
     dense_stage = dense_future.result()
