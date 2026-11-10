@@ -136,8 +136,9 @@ def test_contextualize_query_empty_history():
     assert standalone == "What is BM25?"
 
 
+@patch("hybrid_rag.generation.contextualizer._default_cache.get", return_value=None)
 @patch("hybrid_rag.generation.contextualizer.call_llm")
-def test_contextualize_query_resolves_pronoun(mock_call):
+def test_contextualize_query_resolves_pronoun(mock_call, mock_cache_get):
     mock_call.return_value = json.dumps(
         {"standalone_query": "How does BM25 calculate document frequency?"}
     )

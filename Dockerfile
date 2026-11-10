@@ -29,10 +29,19 @@ COPY --from=frontend-build /app/frontend/dist /app/frontend/dist
 
 ENV PYTHONUNBUFFERED=1
 ENV APP_ENV=production
-ENV HF_HOME=/tmp/hf_cache
-ENV FASTEMBED_CACHE_PATH=/tmp/fastembed_cache
+ENV HF_HOME=/app/.cache/huggingface
+ENV FASTEMBED_CACHE_PATH=/app/.cache/fastembed
+ENV OMP_NUM_THREADS=2
+ENV ONNXRUNTIME_INTRA_OP_THREAD_NUM=2
 
-EXPOSE 8000
+# Pre-download models to eliminate 60-90s cold start on container initialization
+RUN python -c "\
+from fastembed import TextEmbedding; \
+from fastembed.rerank.cross_encoder import TextCrossEncoder; \
+TextEmbedding('BAAI/bge-small-en-v1.5', cache_dir='/app/.cache/fastembed'); \
+TextCrossEncoder('BAAI/bge-reranker-base', cache_dir='/app/.cache/fastembed')"
+
+EXPOSE 7860
 
 ENTRYPOINT ["/app/scripts/entrypoint.sh"]
 CMD ["web"]

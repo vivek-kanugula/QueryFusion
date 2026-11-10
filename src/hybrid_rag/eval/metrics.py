@@ -39,14 +39,16 @@ def ndcg_at_k(retrieved: list[str], relevant: set[str], k: int) -> float:
         return 0.0
     top_k = retrieved[:k]
     dcg = 0.0
+    seen_relevant: set[str] = set()
     for i, doc_id in enumerate(top_k):
-        if doc_id in relevant:
+        if doc_id in relevant and doc_id not in seen_relevant:
             dcg += 1.0 / math.log2(i + 2)
+            seen_relevant.add(doc_id)
     n_relevant_in_ideal = min(len(relevant), k)
     idcg = sum(1.0 / math.log2(i + 2) for i in range(n_relevant_in_ideal))
     if idcg == 0.0:
         return 0.0
-    return dcg / idcg
+    return min(1.0, dcg / idcg)
 
 
 def compute_all(retrieved: list[str], relevant: set[str], k: int) -> dict[str, float]:

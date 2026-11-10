@@ -33,10 +33,19 @@ def compute_hash(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def parse_pdf(data: bytes, filename: str) -> ParsedDocument:
+def parse_pdf(data: bytes, filename: str, max_pages: int = 0) -> ParsedDocument:
     import pymupdf
 
+    from hybrid_rag.settings import settings
+
+    page_limit = max_pages or settings.max_pdf_pages
     doc = pymupdf.open(stream=data, filetype="pdf")
+    total_pages = len(doc)
+    if total_pages > page_limit:
+        doc.close()
+        raise ValueError(
+            f"PDF has {total_pages} pages, exceeding the {page_limit}-page limit"
+        )
     sections: list[ParsedSection] = []
     for page_num, page in enumerate(doc, start=1):
         text = page.get_text("text")

@@ -6,7 +6,7 @@ import hashlib
 import json
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
@@ -48,21 +48,24 @@ class RunManifest:
 @dataclass
 class QuestionResult:
     question_id: str
-    category: str
-    retrieved_ids: list[str]
-    relevant_ids: set[str]
-    metrics: dict[str, float]
+    category: str = ""
+    retrieved_ids: list[str] = field(default_factory=list)
+    relevant_ids: set[str] = field(default_factory=set)
+    metrics: dict[str, float] = field(default_factory=dict)
     latency_ms: float = 0.0
+    question: str = ""
 
 
 @dataclass
 class ExperimentResult:
     name: str
-    manifest: RunManifest
-    config: PipelineConfig
-    overall_metrics: dict[str, ConfidenceInterval]
-    per_category: dict[str, dict[str, ConfidenceInterval]]
-    per_question: list[QuestionResult]
+    manifest: RunManifest = field(default_factory=lambda: RunManifest("", "", "", "", {}, ""))
+    config: PipelineConfig = field(default_factory=PipelineConfig)
+    overall_metrics: dict[str, ConfidenceInterval] = field(default_factory=dict)
+    per_category: dict[str, dict[str, ConfidenceInterval]] = field(default_factory=dict)
+    per_question: list[QuestionResult] = field(default_factory=list)
+    strategy: str = ""
+    chunking_strategy: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -243,8 +246,15 @@ def compare_experiments(
     result_b: ExperimentResult,
     metric: str = "ndcg_at_k",
 ) -> dict[str, Any]:
-    scores_a = np.array([r.metrics[metric] for r in result_a.per_question])
-    scores_b = np.array([r.metrics[metric] for r in result_b.per_question])
+    map_a = {r.question_id: r.metrics.get(metric, 0.0) for r in result_a.per_question}
+    map_b = {r.question_id: r.metrics.get(metric, 0.0) for r in result_b.per_question}
+
+    common_ids = [qid for qid in map_a if qid in map_b]
+    if not common_ids:
+        raise ValueError("No common questions found between experiments")
+
+    scores_a = np.array([map_a[qid] for qid in common_ids], dtype=float)
+    scores_b = np.array([map_b[qid] for qid in common_ids], dtype=float)
 
     stat, p_value = paired_significance(scores_a, scores_b)
     wlt = win_loss_tie(scores_a, scores_b)
@@ -260,6 +270,9 @@ def compare_experiments(
         "delta_ci": {"lower": delta_ci.lower, "upper": delta_ci.upper},
         "wilcoxon_statistic": stat,
         "wilcoxon_p_value": p_value,
+        "statistic": stat,
+        "p_value": p_value,
         "wins_losses_ties": wlt,
+        "win_loss_tie": (wlt["wins"], wlt["losses"], wlt["ties"]),
         "significant_at_005": p_value < 0.05,
     }

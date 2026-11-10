@@ -20,6 +20,10 @@ class GroundedAnswer(BaseModel):
     has_sufficient_context: bool = True
     fallback_reason: str | None = None
 
+    @property
+    def is_fallback(self) -> bool:
+        return self.fallback_reason is not None or not self.has_sufficient_context
+
 
 class VerificationVerdict(StrEnum):
     SUPPORTED = "SUPPORTED"

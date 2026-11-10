@@ -86,3 +86,23 @@ def test_tokenize_technical_removes_stopwords():
 def test_tokenize_technical_preserves_composite():
     tokens = tokenize_technical("DB-204")
     assert "db204" in tokens
+
+
+def test_get_stemmer_thread_local():
+    import threading
+    from hybrid_rag.retrieval.tokenizer import get_stemmer
+
+    stemmers = {}
+
+    def worker(worker_id):
+        stemmers[worker_id] = get_stemmer()
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(5)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    # Verify that each thread gets an isolated stemmer instance
+    stemmer_ids = [id(s) for s in stemmers.values()]
+    assert len(set(stemmer_ids)) == 5

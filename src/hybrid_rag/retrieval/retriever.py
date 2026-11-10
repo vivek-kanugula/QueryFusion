@@ -7,6 +7,7 @@ Hybrid: concurrent Dense + Sparse, fused with weighted Reciprocal Rank Fusion
 
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -21,6 +22,10 @@ from hybrid_rag.schemas.pipeline import (
     QueryTrace,
     StageTrace,
 )
+
+logger = logging.getLogger(__name__)
+
+_retrieval_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="retrieval")
 
 
 def dense_retrieve(
@@ -260,12 +265,11 @@ def hybrid_retrieve(
     trace = QueryTrace(query=query, config=config)
     total_start = time.perf_counter()
 
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        dense_future = executor.submit(dense_retrieve, query, config, db)
-        sparse_future = executor.submit(sparse_retrieve, query, config, bm25_store)
+    dense_future = _retrieval_pool.submit(dense_retrieve, query, config, None)
+    sparse_future = _retrieval_pool.submit(sparse_retrieve, query, config, bm25_store)
 
-        dense_stage = dense_future.result()
-        sparse_stage = sparse_future.result()
+    dense_stage = dense_future.result()
+    sparse_stage = sparse_future.result()
 
     trace.add_stage(dense_stage)
     trace.add_stage(sparse_stage)
@@ -289,45 +293,93 @@ def full_retrieve(
     bm25_store: Bm25Store | None = None,
     db: Session | None = None,
 ) -> QueryTrace:
-    """Full pipeline: dense + sparse -> RRF -> hydrate -> rerank -> Lost-in-the-Middle."""
-    if bm25_store is None:
-        from hybrid_rag.retrieval.bm25_store import get_bm25_store
+    """Full pipeline: route by strategy -> hydrate -> rerank -> Lost-in-the-Middle."""
+    if config.expand_queries:
+        from hybrid_rag.retrieval.expansion import expand_query
 
-        bm25_store = get_bm25_store()
+        expanded = expand_query(query)
+        if len(expanded) > 1:
+            sub_config = PipelineConfig(
+                retrieval_strategy=config.retrieval_strategy,
+                chunking_strategy=config.chunking_strategy,
+                alpha=config.alpha,
+                rrf_k=config.rrf_k,
+                dense_top_k=config.dense_top_k,
+                sparse_top_k=config.sparse_top_k,
+                fusion_top_k=config.fusion_top_k,
+                rerank_top_k=config.rerank_top_k,
+                rerank_enabled=config.rerank_enabled,
+                lost_in_middle=config.lost_in_middle,
+                temperature=config.temperature,
+                document_ids=config.document_ids,
+                expand_queries=False,
+            )
+            return multi_query_retrieve(expanded, sub_config, bm25_store=bm25_store, db=db)
 
-    trace = hybrid_retrieve(query, config, db, bm25_store)
+    strat = (config.retrieval_strategy or "hybrid_rerank").lower()
 
-    rrf_candidates = trace.stages[-1].candidates if trace.stages else []
-    if rrf_candidates:
+    if strat in ("dense_only", "dense"):
+        trace = QueryTrace(query=query, config=config)
+        start = time.perf_counter()
+        stage = dense_retrieve(query, config, db)
+        trace.add_stage(stage)
+        trace.total_duration_ms = (time.perf_counter() - start) * 1000
+        candidates = stage.candidates
+    elif strat in ("bm25_only", "bm25", "sparse"):
+        if bm25_store is None:
+            from hybrid_rag.retrieval.bm25_store import get_bm25_store
+
+            bm25_store = get_bm25_store()
+        trace = QueryTrace(query=query, config=config)
+        start = time.perf_counter()
+        stage = sparse_retrieve(query, config, bm25_store)
+        trace.add_stage(stage)
+        trace.total_duration_ms = (time.perf_counter() - start) * 1000
+        candidates = stage.candidates
+    else:
+        if bm25_store is None:
+            from hybrid_rag.retrieval.bm25_store import get_bm25_store
+
+            bm25_store = get_bm25_store()
+        trace = hybrid_retrieve(query, config, db, bm25_store)
+        candidates = trace.stages[-1].candidates if trace.stages else []
+
+    if candidates:
         hydrate_db = db
         if hydrate_db is not None:
-            hydrate_candidates(rrf_candidates, hydrate_db)
+            hydrate_candidates(candidates, hydrate_db)
         else:
             try:
                 from hybrid_rag.db.engine import SessionLocal
 
                 with SessionLocal() as fallback_db:
-                    hydrate_candidates(rrf_candidates, fallback_db)
+                    hydrate_candidates(candidates, fallback_db)
             except Exception:
-                pass
+                logger.warning(
+                    "Candidate hydration failed; candidates may lack content",
+                    exc_info=True,
+                )
 
         if config.document_ids:
             allowed = {str(d) for d in config.document_ids}
-            rrf_candidates = [c for c in rrf_candidates if c.metadata.get("document_id") in allowed]
-            trace.stages[-1].candidates = rrf_candidates
+            candidates = [c for c in candidates if c.metadata.get("document_id") in allowed]
+            trace.stages[-1].candidates = candidates
 
-    if not config.rerank_enabled:
+    if not config.rerank_enabled or not candidates:
         return trace
 
-    from hybrid_rag.retrieval.reranker import rerank_candidates
+    try:
+        from hybrid_rag.retrieval.reranker import rerank_candidates
 
-    rerank_stage = rerank_candidates(
-        query=query,
-        candidates=rrf_candidates,
-        top_k=config.rerank_top_k,
-        apply_lost_in_middle=config.lost_in_middle,
-    )
-    trace.add_stage(rerank_stage)
+        rerank_stage = rerank_candidates(
+            query=query,
+            candidates=candidates,
+            top_k=config.rerank_top_k,
+            apply_lost_in_middle=config.lost_in_middle,
+        )
+        trace.add_stage(rerank_stage)
+    except Exception:
+        logger.warning("Reranker failed; returning unranked candidates", exc_info=True)
 
     return trace
 
@@ -381,8 +433,29 @@ def multi_query_retrieve(
 
     primary_query = queries[0]
     traces: list[QueryTrace] = []
+    strat = (config.retrieval_strategy or "hybrid_rerank").lower()
+    if strat not in ("dense_only", "dense") and bm25_store is None:
+        from hybrid_rag.retrieval.bm25_store import get_bm25_store
+
+        bm25_store = get_bm25_store()
+
     for q in queries:
-        traces.append(hybrid_retrieve(q, config, db=db, bm25_store=bm25_store))
+        if strat in ("dense_only", "dense"):
+            t = QueryTrace(query=q, config=config)
+            start = time.perf_counter()
+            s = dense_retrieve(q, config, db)
+            t.add_stage(s)
+            t.total_duration_ms = (time.perf_counter() - start) * 1000
+            traces.append(t)
+        elif strat in ("bm25_only", "bm25", "sparse"):
+            t = QueryTrace(query=q, config=config)
+            start = time.perf_counter()
+            s = sparse_retrieve(q, config, bm25_store)
+            t.add_stage(s)
+            t.total_duration_ms = (time.perf_counter() - start) * 1000
+            traces.append(t)
+        else:
+            traces.append(hybrid_retrieve(q, config, db=db, bm25_store=bm25_store))
 
     rrf_k = config.rrf_k
     scores: dict[str, float] = {}
@@ -414,6 +487,17 @@ def multi_query_retrieve(
 
     if db is not None:
         hydrate_candidates(fused_candidates, db)
+    else:
+        try:
+            from hybrid_rag.db.engine import SessionLocal
+
+            with SessionLocal() as fallback_db:
+                hydrate_candidates(fused_candidates, fallback_db)
+        except Exception:
+            logger.warning(
+                "Candidate hydration failed; candidates may lack content",
+                exc_info=True,
+            )
 
     if config.document_ids:
         allowed = {str(d) for d in config.document_ids}
@@ -436,14 +520,17 @@ def multi_query_retrieve(
     )
 
     if config.rerank_enabled and fused_candidates:
-        from hybrid_rag.retrieval.reranker import rerank_candidates
+        try:
+            from hybrid_rag.retrieval.reranker import rerank_candidates
 
-        rerank_stage = rerank_candidates(
-            query=primary_query,
-            candidates=fused_candidates,
-            top_k=config.rerank_top_k,
-            apply_lost_in_middle=config.lost_in_middle,
-        )
-        merged_trace.add_stage(rerank_stage)
+            rerank_stage = rerank_candidates(
+                query=primary_query,
+                candidates=fused_candidates,
+                top_k=config.rerank_top_k,
+                apply_lost_in_middle=config.lost_in_middle,
+            )
+            merged_trace.add_stage(rerank_stage)
+        except Exception:
+            logger.warning("Reranker failed in multi-query; returning unranked", exc_info=True)
 
     return merged_trace

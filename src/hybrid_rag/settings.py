@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     # Gemini
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-3.5-flash-lite"
+    gemini_verifier_model: str = "gemini-3.5-flash"
 
     # Additional Providers (Groq & Local Ollama)
     groq_api_key: str | None = None
@@ -51,7 +52,7 @@ class Settings(BaseSettings):
 
     # Embedding & reranking
     embedding_model: str = "BAAI/bge-small-en-v1.5"
-    reranker_model: str = "Xenova/ms-marco-MiniLM-L-6-v2"
+    reranker_model: str = "BAAI/bge-reranker-base"
 
     # Cache paths
     hf_home: str = Field(
@@ -72,12 +73,30 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     uvicorn_workers: int = 1
     uvicorn_host: str = "0.0.0.0"
-    uvicorn_port: int = 8000
+    uvicorn_port: int = 7860
 
     # Security
-    cors_origins: list[str] = ["*"]
+    cors_origins: list[str] = Field(
+        default_factory=lambda: (
+            [
+                origin.strip()
+                for origin in os.getenv("CORS_ORIGINS", os.getenv("FRONTEND_URL", "")).split(",")
+                if origin.strip()
+            ]
+            or ["https://huggingface.co"]
+        )
+        if os.getenv("APP_ENV") == "production"
+        else [
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "http://localhost:3000",
+            "http://localhost:7860",
+        ]
+    )
+    request_timeout_seconds: int = 120
+    max_pdf_pages: int = 500
 
-    # Storage quotas
+    # Storage quotas (200 MB raw document cap provides safe headroom under Supabase 500 MB limit with pgvector indexes)
     max_upload_size_mb: int = 50
     max_documents_count: int = 50
     max_storage_mb: int = 200

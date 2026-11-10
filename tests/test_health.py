@@ -2,6 +2,7 @@
 
 from unittest.mock import patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 from hybrid_rag.app import app
@@ -31,3 +32,20 @@ def test_health_db_disconnected():
         data = response.json()
         assert data["status"] == "unavailable"
         assert data["database"] is False
+
+
+@pytest.mark.asyncio
+async def test_lifespan_bm25_init_error_logged(caplog):
+    import logging
+    from fastapi import FastAPI
+    from hybrid_rag.app import lifespan
+
+    dummy_app = FastAPI()
+    with patch(
+        "hybrid_rag.retrieval.bm25_store.get_bm25_store",
+        side_effect=RuntimeError("Store init failed"),
+    ):
+        with caplog.at_level(logging.ERROR):
+            async with lifespan(dummy_app):
+                pass
+    assert "BM25 index initialization failed" in caplog.text

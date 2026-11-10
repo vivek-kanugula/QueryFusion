@@ -183,9 +183,12 @@ def chunk_structure_aware(
             heading = s.get("heading")
             offset = text.find(stext, char_pos)
             if offset == -1:
+                offset = text.find(stext)
+            if offset == -1:
                 offset = char_pos
-            raw_blocks.append((stext, heading, offset, offset + len(stext)))
-            char_pos = offset + len(stext)
+            end = offset + len(stext)
+            raw_blocks.append((stext, heading, offset, end))
+            char_pos = end
     else:
         raw_blocks = _split_by_headers(text)
 

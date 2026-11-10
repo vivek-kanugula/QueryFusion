@@ -18,14 +18,15 @@ class PipelineConfig:
     chunking_strategy: str = "fixed"  # fixed | structure | semantic
     alpha: float = 0.5  # RRF weight: 1.0 = dense only, 0.0 = BM25 only
     rrf_k: int = 60
-    dense_top_k: int = 50
-    sparse_top_k: int = 50
+    dense_top_k: int = 30
+    sparse_top_k: int = 30
     fusion_top_k: int = 20
-    rerank_top_k: int = 5
+    rerank_top_k: int = 6
     rerank_enabled: bool = True
     lost_in_middle: bool = True
     temperature: float = 0.0
     document_ids: tuple[str, ...] | None = None
+    expand_queries: bool = False
 
 
 @dataclass

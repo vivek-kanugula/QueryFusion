@@ -301,6 +301,11 @@ def test_execute_corrective_fallback():
         )
 
         assert mock_ret.called
+        called_config = mock_ret.call_args[0][1]
+        assert called_config.dense_top_k > config.dense_top_k
+        assert called_config.sparse_top_k > config.sparse_top_k
+        assert called_config.fusion_top_k >= config.fusion_top_k
+        assert called_config.rerank_top_k >= config.rerank_top_k
         assert mock_gen.called
         assert result.was_corrected is True
         assert result.correction_reason == "Low confidence"

@@ -62,6 +62,25 @@ def test_format_context_includes_doc_id():
     assert "doc-2" in ctx
 
 
+def test_format_context_escapes_special_characters_in_attributes():
+    import xml.etree.ElementTree as ET
+
+    candidate = CandidateResult(
+        chunk_id='chunk"1<script>',
+        score=0.9,
+        rank=1,
+        content="Safe content",
+        metadata={"document_id": 'doc"1>&evil'},
+    )
+    ctx = format_context([candidate])
+    # Must produce well-formed XML that parses with full attribute fidelity
+    root = ET.fromstring(ctx)
+    passage = root.find("context_passage")
+    assert passage is not None
+    assert passage.attrib["chunk_id"] == 'chunk"1<script>'
+    assert passage.attrib["doc_id"] == 'doc"1>&evil'
+
+
 # ── Citation map ──
 
 
@@ -137,6 +156,18 @@ def test_parse_invalid_json():
     result = _parse_response("not json at all", _make_candidates())
     assert not result.has_sufficient_context
     assert "Failed to parse" in result.fallback_reason
+
+
+def test_parse_none_response_safety_filtered():
+    result = _parse_response(None, _make_candidates())
+    assert not result.has_sufficient_context
+    assert "Empty or filtered" in result.fallback_reason
+
+
+def test_parse_empty_string_response():
+    result = _parse_response("   ", _make_candidates())
+    assert not result.has_sufficient_context
+    assert "Empty or filtered" in result.fallback_reason
 
 
 def test_parse_filters_invalid_citations():

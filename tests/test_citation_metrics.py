@@ -84,7 +84,7 @@ def test_mixed_verdicts():
     v = _make_verification(supported=2, unsupported=1, misattributed=1)
     scores = compute_citation_metrics(v)
     assert abs(scores.citation_accuracy - 0.5) < 1e-9
-    assert abs(scores.citation_precision - 0.5) < 1e-9
+    assert abs(scores.citation_precision - (2 / 3)) < 1e-9
     assert scores.total_claims == 4
 
 
@@ -119,8 +119,9 @@ def test_single_supported():
     assert scores.total_claims == 1
 
 
-def test_precision_equals_accuracy():
-    """accuracy = S/total, precision = S/(S+U+M) = S/total. Same formula."""
+def test_precision_over_attributed_claims():
+    """precision = S/(S+M), accuracy = S/total."""
     v = _make_verification(supported=3, unsupported=2)
     scores = compute_citation_metrics(v)
-    assert abs(scores.citation_accuracy - scores.citation_precision) < 1e-9
+    assert abs(scores.citation_accuracy - 0.6) < 1e-9
+    assert abs(scores.citation_precision - 1.0) < 1e-9

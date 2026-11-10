@@ -649,9 +649,13 @@ export default function Documents() {
       {/* Wipeout modal */}
       {wipeoutOpen && (
         <WipeoutModal
-          count={docs.length}
+          count={docs.filter((d) => d.is_evictable !== false).length}
+          protectedCount={docs.filter((d) => d.is_evictable === false).length}
           onConfirm={() => {
-            batchMut.mutate(docs.map((d) => d.id));
+            const evictable = docs.filter((d) => d.is_evictable !== false).map((d) => d.id);
+            if (evictable.length > 0) {
+              batchMut.mutate(evictable);
+            }
             setWipeoutOpen(false);
           }}
           onCancel={() => setWipeoutOpen(false)}
@@ -727,10 +731,12 @@ function ChunkDrawer({
 
 function WipeoutModal({
   count,
+  protectedCount = 0,
   onConfirm,
   onCancel,
 }: {
   count: number;
+  protectedCount?: number;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
@@ -744,8 +750,12 @@ function WipeoutModal({
           <h3 className="font-semibold">Delete All Documents</h3>
         </div>
         <p className="text-sm text-[var(--color-text-secondary)] mb-6">
-          This will permanently delete all {count} documents and their chunks.
-          This action cannot be undone.
+          This will permanently delete all {count} user-uploaded documents and their chunks.
+          {protectedCount > 0 && (
+            <span className="block mt-2 text-xs text-[var(--color-primary)] font-medium">
+              Note: {protectedCount} protected golden evaluation document{protectedCount > 1 ? "s" : ""} will be safely preserved.
+            </span>
+          )}
         </p>
         <div className="flex gap-3 justify-end">
           <button
@@ -756,7 +766,8 @@ function WipeoutModal({
           </button>
           <button
             onClick={onConfirm}
-            className="px-4 py-2 text-sm rounded-lg bg-[var(--color-danger)] text-white font-medium hover:opacity-90"
+            disabled={count === 0}
+            className="px-4 py-2 text-sm rounded-lg bg-[var(--color-danger)] text-white font-medium hover:opacity-90 disabled:opacity-50"
           >
             Delete All
           </button>

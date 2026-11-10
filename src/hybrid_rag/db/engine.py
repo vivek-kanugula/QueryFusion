@@ -3,11 +3,17 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from hybrid_rag.settings import settings
 
+connect_args = {}
+if "psycopg" in settings.database_url or "postgres" in settings.database_url:
+    # Explicitly disable client-side prepared statements for Supabase/PgBouncer pooler compatibility
+    connect_args["prepare_threshold"] = 0
+
 engine = create_engine(
     settings.database_url,
     pool_pre_ping=settings.db_pool_pre_ping,
     pool_recycle=settings.db_pool_recycle,
     pool_size=settings.db_pool_size,
+    connect_args=connect_args,
     echo=False,
 )
 

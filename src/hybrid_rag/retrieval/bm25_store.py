@@ -58,8 +58,32 @@ class Bm25Store:
             return 0
 
         corpus_tokens = self._tokenize(texts)
+        if not getattr(corpus_tokens, "vocab", None):
+            with self._lock:
+                self._indices.pop(strategy, None)
+                self._chunk_ids.pop(strategy, None)
+                self._chunk_doc_ids.pop(strategy, None)
+            logger.warning(
+                "BM25 index skipped (empty vocabulary after tokenization): strategy=%s, docs=%d",
+                strategy,
+                len(texts),
+            )
+            return 0
+
         new_index = bm25s.BM25()
-        new_index.index(corpus_tokens)
+        try:
+            new_index.index(corpus_tokens)
+        except ValueError as exc:
+            logger.warning(
+                "BM25 index failed due to empty/invalid vocabulary: strategy=%s, error=%s",
+                strategy,
+                exc,
+            )
+            with self._lock:
+                self._indices.pop(strategy, None)
+                self._chunk_ids.pop(strategy, None)
+                self._chunk_doc_ids.pop(strategy, None)
+            return 0
 
         doc_id_list = list(doc_ids) if doc_ids is not None else [""] * len(chunk_ids)
 

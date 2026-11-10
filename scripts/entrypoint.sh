@@ -7,9 +7,9 @@ if [ -n "$DATABASE_URL" ]; then
     alembic upgrade head || echo "Notice: Database migrations already up to date or connecting."
 fi
 
-# If no arguments passed or "web" passed, start uvicorn on $PORT (defaults to 8000)
+# If no arguments passed or "web" passed, start uvicorn on $PORT (defaults to 7860 for HF Spaces)
 if [ $# -eq 0 ] || [ "$1" = "web" ]; then
-    PORT="${PORT:-8000}"
+    PORT="${PORT:-7860}"
     echo "QueryFusion: Starting web server on port $PORT..."
     exec uvicorn hybrid_rag.app:app --host 0.0.0.0 --port "$PORT" --workers 1
 fi

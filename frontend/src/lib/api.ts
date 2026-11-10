@@ -390,6 +390,29 @@ export function streamQuery(
           }
         }
       }
+
+      if (buffer.trim()) {
+        let eventType = "message";
+        const dataLines: string[] = [];
+
+        for (const line of buffer.split("\n")) {
+          const trimmedLine = line.trimEnd();
+          if (trimmedLine.startsWith("event:")) {
+            eventType = trimmedLine.slice(6).trim();
+          } else if (trimmedLine.startsWith("data:")) {
+            dataLines.push(trimmedLine.slice(5).trimStart());
+          }
+        }
+
+        const rawData = dataLines.join("\n");
+        try {
+          const parsedData = rawData ? JSON.parse(rawData) : {};
+          onEvent({ event: eventType, data: parsedData });
+        } catch {
+          // skip malformed data payload
+        }
+      }
+
       onDone();
     })
     .catch((err: unknown) => {
@@ -405,4 +428,35 @@ export function streamQuery(
 
 export function fetchHealth(): Promise<{ status: string }> {
   return request("/health");
+}
+
+export interface EvalStrategyMetrics {
+  precision_at_k: number;
+  recall_at_k: number;
+  mrr: number;
+  ndcg_at_k: number;
+  faithfulness_score: number;
+  relevancy_score: number;
+  citation_accuracy: number;
+  citation_coverage: number;
+}
+
+export interface EvalStrategyResult {
+  id: string;
+  experiment_name: string;
+  retrieval_strategy: string;
+  chunking_strategy: string;
+  created_at: string;
+  n_questions: number;
+  metrics: EvalStrategyMetrics;
+  latency_breakdown: Record<string, unknown> | null;
+}
+
+export interface EvalResults {
+  has_data: boolean;
+  strategies: EvalStrategyResult[];
+}
+
+export function fetchEvalResults(): Promise<EvalResults> {
+  return request("/api/v1/evaluation/results");
 }
