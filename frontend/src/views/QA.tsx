@@ -1,14 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import {
   AlertCircle,
-  Bot,
   Check,
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   Copy,
-  Cpu,
   Download,
   FileText,
   Filter,
@@ -17,12 +15,8 @@ import {
   MessageSquare,
   RotateCcw,
   Search,
-  Shield,
-  ShieldCheck,
-  Sparkles,
   User,
   X,
-  Zap,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
@@ -47,7 +41,6 @@ export interface ModelOption {
   name: string;
   provider: "gemini" | "groq" | "ollama";
   group: "Google Gemini" | "Groq Cloud" | "Local Ollama";
-  badge: string;
   description: string;
 }
 
@@ -57,56 +50,49 @@ const AVAILABLE_MODELS: ModelOption[] = [
     name: "Gemini 3.5 Flash Lite",
     provider: "gemini",
     group: "Google Gemini",
-    badge: "Default",
-    description: "Ultra-fast, lowest latency, high accuracy",
+    description: "Fastest, lowest latency",
   },
   {
     id: "gemini-3.8-flash",
     name: "Gemini 3.8 Flash",
     provider: "gemini",
     group: "Google Gemini",
-    badge: "Balanced",
-    description: "Balanced reasoning with sub-second response",
+    description: "Balanced reasoning",
   },
   {
     id: "gemini-2.5-flash",
     name: "Gemini 2.5 Flash",
     provider: "gemini",
     group: "Google Gemini",
-    badge: "Flash",
-    description: "Production-proven low latency workhorse",
+    description: "Production workhorse",
   },
   {
     id: "gemini-3.1-pro-preview",
-    name: "Gemini 3.1 Pro Preview",
+    name: "Gemini 3.1 Pro",
     provider: "gemini",
     group: "Google Gemini",
-    badge: "Pro Preview",
-    description: "Deep reasoning & citation scrutiny",
+    description: "Deep reasoning, citation scrutiny",
   },
   {
     id: "llama-3.3-70b-versatile",
-    name: "Llama 3.3 70B (Groq)",
+    name: "Llama 3.3 70B",
     provider: "groq",
     group: "Groq Cloud",
-    badge: "Groq LPU",
-    description: "Fast 70B open weights reasoning via Groq",
+    description: "70B open weights via Groq",
   },
   {
     id: "llama-3.1-8b-instant",
-    name: "Llama 3.1 8B (Groq)",
+    name: "Llama 3.1 8B",
     provider: "groq",
     group: "Groq Cloud",
-    badge: "Instant",
-    description: "Sub-100ms ultra-rapid 8B generation",
+    description: "Sub-100ms generation",
   },
   {
     id: "ollama/llama3.2",
     name: "Llama 3.2 (Local)",
     provider: "ollama",
     group: "Local Ollama",
-    badge: "Offline",
-    description: "Runs privately on localhost:11434",
+    description: "Runs on localhost:11434",
   },
 ];
 
@@ -208,7 +194,7 @@ function saveSessionState(data: PersistedQASession | null) {
       sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(data));
     }
   } catch {
-    // Gracefully handle storage quota
+    // storage quota
   }
 }
 
@@ -257,16 +243,16 @@ function StageBadge({
 }) {
   return (
     <span
-      className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-all ${
+      className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium transition-colors ${
         done
-          ? "bg-[var(--color-success)]/10 text-[var(--color-success)]"
+          ? "bg-[var(--surface-raised)] text-[var(--positive)]"
           : active
-            ? "bg-[var(--color-primary)]/10 text-[var(--color-primary)] animate-pulse"
-            : "bg-[var(--color-bg-tertiary)] text-[var(--color-text-tertiary)]"
+            ? "bg-[var(--surface-raised)] text-[var(--accent-fg)]"
+            : "bg-[var(--surface-raised)] text-[var(--text-muted)]"
       }`}
     >
-      {done && <CheckCircle2 size={12} />}
-      {active && !done && <Loader2 size={12} className="animate-spin" />}
+      {done && <CheckCircle2 size={12} strokeWidth={1.5} />}
+      {active && !done && <Loader2 size={12} strokeWidth={1.5} className="animate-spin" />}
       {name}
     </span>
   );
@@ -275,16 +261,15 @@ function StageBadge({
 function ConfidenceBadge({ score }: { score: number }) {
   const color =
     score >= 0.75
-      ? "var(--color-success)"
+      ? "var(--positive)"
       : score >= 0.5
-        ? "var(--color-warning)"
-        : "var(--color-danger)";
+        ? "var(--warning)"
+        : "var(--negative)";
   return (
     <span
-      className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold"
-      style={{ backgroundColor: `${color}20`, color }}
+      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-medium font-mono tabular-nums"
+      style={{ backgroundColor: `color-mix(in srgb, ${color} 12%, transparent)`, color }}
     >
-      <Shield size={13} />
       {(score * 100).toFixed(0)}%
     </span>
   );
@@ -327,7 +312,6 @@ export default function QA() {
 
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  // Side-by-Side Split-Screen Citation Inspector State
   const [inspectCitation, setInspectCitation] = useState<{
     citation_id: string;
     chunk_id: string;
@@ -347,12 +331,9 @@ export default function QA() {
   const sse = useSSEQuery();
   const lastTraceAppendedRef = useRef<string | null>(null);
 
-  // Fetch adjacent chunk context when a citation is selected
   useEffect(() => {
     const chunkId = inspectCitation?.chunk_id;
-    if (!chunkId) {
-      return;
-    }
+    if (!chunkId) return;
 
     let isMounted = true;
     fetchChunkContext(chunkId)
@@ -369,24 +350,15 @@ export default function QA() {
         }
       });
 
-    return () => {
-      isMounted = false;
-    };
+    return () => { isMounted = false; };
   }, [inspectCitation?.chunk_id]);
 
-  // Close dropdowns on outside click
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
-      if (
-        dropdownRef.current &&
-        !dropdownRef.current.contains(event.target as Node)
-      ) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setDropdownOpen(false);
       }
-      if (
-        modelDropdownRef.current &&
-        !modelDropdownRef.current.contains(event.target as Node)
-      ) {
+      if (modelDropdownRef.current && !modelDropdownRef.current.contains(event.target as Node)) {
         setModelDropdownOpen(false);
       }
     }
@@ -394,12 +366,10 @@ export default function QA() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // Auto-scroll when messages or streaming status update
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, sse.isStreaming, sse.stages]);
 
-  // Append completed assistant message into conversation thread
   useEffect(() => {
     if (sse.isStreaming) return;
     if (!sse.answer?.answer && !sse.error) return;
@@ -426,15 +396,12 @@ export default function QA() {
       content: answerData?.answer || (sse.error ? `Error: ${sse.error}` : ""),
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       contextualizedQuery:
-        (completedData as { contextualized_query?: string | null })?.contextualized_query ||
-        undefined,
+        (completedData as { contextualized_query?: string | null })?.contextualized_query || undefined,
       expandedQueries:
-        (completedData as { expanded_queries?: string[] | null })?.expanded_queries ||
-        undefined,
+        (completedData as { expanded_queries?: string[] | null })?.expanded_queries || undefined,
       wasCorrected: (completedData as { was_corrected?: boolean })?.was_corrected,
       correctionReason:
-        (completedData as { correction_reason?: string | null })?.correction_reason ||
-        undefined,
+        (completedData as { correction_reason?: string | null })?.correction_reason || undefined,
       citations: answerData?.citations || [],
       verification: sse.verification as ChatMessage["verification"],
       confidence: sse.confidence as ChatMessage["confidence"],
@@ -445,43 +412,16 @@ export default function QA() {
     };
 
     setMessages((prev) => [...prev, assistantMsg]);
-  }, [
-    sse.isStreaming,
-    sse.answer,
-    sse.verification,
-    sse.confidence,
-    sse.completed,
-    sse.error,
-    sse.traceId,
-  ]);
+  }, [sse.isStreaming, sse.answer, sse.verification, sse.confidence, sse.completed, sse.error, sse.traceId]);
 
-  // Persist session state
   useEffect(() => {
     if (sse.isStreaming) return;
-
     if (messages.length > 0 || question.trim() !== "") {
       saveSessionState({
-        question,
-        mode,
-        alpha,
-        queryExpansion,
-        selectedDocIds,
-        selectedModel,
-        selectedProvider,
-        messages,
+        question, mode, alpha, queryExpansion, selectedDocIds, selectedModel, selectedProvider, messages,
       });
     }
-  }, [
-    messages,
-    question,
-    mode,
-    alpha,
-    queryExpansion,
-    selectedDocIds,
-    selectedModel,
-    selectedProvider,
-    sse.isStreaming,
-  ]);
+  }, [messages, question, mode, alpha, queryExpansion, selectedDocIds, selectedModel, selectedProvider, sse.isStreaming]);
 
   const toggleDoc = (docId: string) => {
     setSelectedDocIds((prev) =>
@@ -489,22 +429,13 @@ export default function QA() {
     );
   };
 
-  const selectAllDocs = () => {
-    setSelectedDocIds(docs.map((d: Document) => d.id));
-  };
-
-  const clearDocSelection = () => {
-    setSelectedDocIds([]);
-  };
-
-  const removeDoc = (docId: string) => {
-    setSelectedDocIds((prev) => prev.filter((id) => id !== docId));
-  };
+  const selectAllDocs = () => setSelectedDocIds(docs.map((d: Document) => d.id));
+  const clearDocSelection = () => setSelectedDocIds([]);
+  const removeDoc = (docId: string) => setSelectedDocIds((prev) => prev.filter((id) => id !== docId));
 
   const selectedMode = MODES.find((m) => m.value === mode)!;
   const isHybrid = mode === "hybrid" || mode === "hybrid_rerank";
-  const activeModel =
-    AVAILABLE_MODELS.find((m) => m.id === selectedModel) || AVAILABLE_MODELS[0];
+  const activeModel = AVAILABLE_MODELS.find((m) => m.id === selectedModel) || AVAILABLE_MODELS[0];
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -518,15 +449,10 @@ export default function QA() {
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     };
 
-    const nextMessages = [...messages, userMsg];
-    setMessages(nextMessages);
+    setMessages((prev) => [...prev, userMsg]);
     setQuestion("");
 
-    // Build chat history for conversational contextualization
-    const chatHistory = messages.map((m) => ({
-      role: m.role,
-      content: m.content,
-    }));
+    const chatHistory = messages.map((m) => ({ role: m.role, content: m.content }));
 
     sse.execute(trimmed, {
       retrieval_strategy: mode,
@@ -562,11 +488,11 @@ export default function QA() {
     const targetMessages = msg ? [msg] : messages;
     if (targetMessages.length === 0) return;
 
-    let md = `# QueryFusion Multi-Turn Q&A Session\n\n`;
+    let md = `# Q&A Session\n\n`;
     md += `**Date:** ${new Date().toISOString()}\n`;
     md += `**Model:** ${activeModel.name} (${activeModel.provider})\n`;
-    md += `**Retrieval Mode:** ${mode} (Alpha: ${alpha})\n`;
-    if (queryExpansion) md += `**Query Expansion (HyDE):** Enabled\n`;
+    md += `**Retrieval:** ${mode} (alpha ${alpha})\n`;
+    if (queryExpansion) md += `**Query expansion:** enabled\n`;
     md += `\n---\n\n`;
 
     targetMessages.forEach((m, idx) => {
@@ -574,17 +500,17 @@ export default function QA() {
       md += `${speaker} [${m.timestamp}]\n\n${m.content}\n\n`;
 
       if (m.contextualizedQuery) {
-        md += `> **Reformulated Search Query:** ${m.contextualizedQuery}\n\n`;
+        md += `> **Reformulated query:** ${m.contextualizedQuery}\n\n`;
       }
       if (m.expandedQueries && m.expandedQueries.length > 1) {
-        md += `> **Expanded Queries:** ${m.expandedQueries.join(", ")}\n\n`;
+        md += `> **Expanded queries:** ${m.expandedQueries.join(", ")}\n\n`;
       }
       if (m.wasCorrected) {
-        md += `> **Self-Correction (CRAG):** ${m.correctionReason || "Applied"}\n\n`;
+        md += `> **Self-corrected:** ${m.correctionReason || "Re-retrieved with broader scope"}\n\n`;
       }
 
       if (m.verification?.claims && m.verification.claims.length > 0) {
-        md += `**Citation Verification:**\n`;
+        md += `**Verification:**\n`;
         m.verification.claims.forEach((c) => {
           md += `- [${c.verdict}] ${c.claim_text}\n`;
         });
@@ -592,23 +518,21 @@ export default function QA() {
       }
 
       if (m.citations && m.citations.length > 0) {
-        md += `**Citations Used:**\n`;
+        md += `**Citations:**\n`;
         m.citations.forEach((c) => {
-          md += `- [${c.citation_id}] Chunk: \`${c.chunk_id}\` quote: "${c.evidence_quote}"\n`;
+          md += `- [${c.citation_id}] Chunk: \`${c.chunk_id}\` "${c.evidence_quote}"\n`;
         });
         md += `\n`;
       }
 
-      if (idx < targetMessages.length - 1) {
-        md += `---\n\n`;
-      }
+      if (idx < targetMessages.length - 1) md += `---\n\n`;
     });
 
     const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `queryfusion_chat_${Date.now()}.md`;
+    link.download = `qa_session_${Date.now()}.md`;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -622,13 +546,11 @@ export default function QA() {
       timestamp: new Date().toISOString(),
       messages,
     };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], {
-      type: "application/json",
-    });
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `queryfusion_chat_${Date.now()}.json`;
+    link.download = `qa_session_${Date.now()}.json`;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -642,7 +564,6 @@ export default function QA() {
     const cleanToken = rawToken.replace(/^\[|\]$/g, "").trim();
     const lowerClean = cleanToken.toLowerCase();
 
-    // 1. Exact match on citation_id (raw or bracket-stripped)
     const exact = citations.find((c) => {
       if (!c.citation_id) return false;
       const cid = c.citation_id.trim();
@@ -663,7 +584,6 @@ export default function QA() {
       };
     }
 
-    // 2. Direct match on chunk_id or document_id
     const byId = citations.find(
       (c) =>
         (c.chunk_id && (c.chunk_id === rawToken || c.chunk_id === cleanToken)) ||
@@ -678,7 +598,6 @@ export default function QA() {
       };
     }
 
-    // 3. Normalized numeric comparison (e.g. "[C1]", "[1]", "[^1]")
     const numMatch = cleanToken.match(/^(?:c|\^|doc-)?(\d+)$/i);
     if (numMatch) {
       const num = parseInt(numMatch[1], 10);
@@ -697,7 +616,6 @@ export default function QA() {
         };
       }
 
-      // 4. Safe 1-based index fallback
       const idx = num - 1;
       if (idx >= 0 && idx < citations.length) {
         const fb = citations[idx];
@@ -752,7 +670,7 @@ export default function QA() {
                         ? `Chunk: ${citation.chunk_id}`
                         : `Citation ${rawToken}`
                   }
-                  className="inline-flex items-center px-1.5 py-0.5 mx-0.5 text-xs font-mono font-semibold bg-[var(--color-primary)]/10 text-[var(--color-primary)] rounded hover:bg-[var(--color-primary)]/20 transition-colors cursor-pointer align-baseline"
+                  className="inline-flex items-center px-1.5 py-0.5 mx-0.5 text-[11px] font-mono font-medium bg-[var(--surface-raised)] text-[var(--accent-fg)] rounded hover:bg-[var(--accent)]/10 transition-colors cursor-pointer align-baseline"
                 >
                   {rawToken}
                 </button>
@@ -763,7 +681,7 @@ export default function QA() {
                 href={href}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-[var(--color-primary)] underline hover:opacity-80"
+                className="text-[var(--accent-fg)] underline hover:opacity-80"
               >
                 {children}
               </a>
@@ -778,7 +696,6 @@ export default function QA() {
 
   return (
     <div className="relative min-h-[calc(100vh-80px)] flex">
-      {/* Main Chat View Container (dynamically accommodates the side drawer) */}
       <div
         className={`flex-1 transition-all duration-300 ${
           inspectCitation ? "lg:mr-[440px]" : ""
@@ -786,15 +703,12 @@ export default function QA() {
       >
         <div className="max-w-4xl mx-auto space-y-6">
           {/* Header */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <MessageSquare className="text-[var(--color-primary)]" size={22} />
-              <div>
-                <h2 className="text-xl font-semibold">Conversational Q&A</h2>
-                <p className="text-xs text-[var(--color-text-tertiary)]">
-                  Hybrid RAG with multi-query expansion, CRAG self-correction, & citation inspection
-                </p>
-              </div>
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <h2 className="text-xl font-medium">Q&A</h2>
+              <p className="text-[13px] text-[var(--text-secondary)] mt-1">
+                Ask questions about your documents
+              </p>
             </div>
 
             <div className="flex items-center gap-2">
@@ -803,249 +717,244 @@ export default function QA() {
                   <button
                     type="button"
                     onClick={() => handleExportMarkdown()}
-                    className="text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text)] px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-bg-secondary)] transition-colors flex items-center gap-1.5 cursor-pointer"
-                    title="Export conversation as Markdown"
+                    className="inline-flex items-center gap-1.5 px-3 py-2 text-[12px] font-medium rounded-lg border border-[var(--border)] hover:bg-[var(--surface-raised)] text-[var(--text-secondary)] transition-colors cursor-pointer"
+                    title="Export as Markdown"
                   >
-                    <Download size={13} />
-                    <span>Export Chat</span>
+                    <Download size={13} strokeWidth={1.5} />
+                    Export
                   </button>
                   <button
                     type="button"
                     onClick={handleExportJSON}
-                    className="text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text)] px-2 py-1.5 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-bg-secondary)] transition-colors flex items-center cursor-pointer font-mono font-semibold"
-                    title="Export conversation as JSON"
+                    className="inline-flex items-center px-2.5 py-2 text-[12px] font-medium font-mono rounded-lg border border-[var(--border)] hover:bg-[var(--surface-raised)] text-[var(--text-secondary)] transition-colors cursor-pointer"
+                    title="Export as JSON"
                   >
                     JSON
                   </button>
                   <button
                     type="button"
                     onClick={handleResetSession}
-                    className="text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-danger)] px-2.5 py-1.5 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-bg-secondary)] transition-colors flex items-center gap-1.5 cursor-pointer"
-                    title="Clear conversation and reset memory"
+                    className="inline-flex items-center gap-1.5 px-3 py-2 text-[12px] font-medium rounded-lg border border-[var(--border)] hover:bg-[var(--surface-raised)] text-[var(--text-muted)] hover:text-[var(--negative)] transition-colors cursor-pointer"
+                    title="Clear conversation"
                   >
-                    <RotateCcw size={13} />
-                    <span>New Chat</span>
+                    <RotateCcw size={13} strokeWidth={1.5} />
+                    New chat
                   </button>
                 </>
               )}
             </div>
           </div>
 
-          {/* Control Bar: Retrieval Mode, Model Selector, Query Expansion, & Document Scope */}
-          <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl">
-            {/* Retrieval Strategy Selector */}
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-xs font-medium text-[var(--color-text-tertiary)] mr-1">
-                Search:
-              </span>
-              {MODES.map((m) => (
-                <button
-                  key={m.value}
-                  type="button"
-                  onClick={() => setMode(m.value)}
-                  className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${
-                    mode === m.value
-                      ? "bg-[var(--color-primary)] text-white border-[var(--color-primary)] font-medium"
-                      : "border-[var(--color-border)] hover:border-[var(--color-border-hover)] text-[var(--color-text-secondary)]"
-                  }`}
-                >
-                  {m.label}
-                </button>
-              ))}
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              {/* Query Expansion (HyDE) Toggle */}
-              <button
-                type="button"
-                onClick={() => setQueryExpansion((prev) => !prev)}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors cursor-pointer ${
-                  queryExpansion
-                    ? "bg-[var(--color-primary)] text-white border-[var(--color-primary)] shadow-xs"
-                    : "bg-[var(--color-bg)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-hover)]"
-                }`}
-                title="Generate alternate query variations and a hypothetical passage (HyDE) to maximize retrieval recall"
-              >
-                <Sparkles
-                  size={13}
-                  className={queryExpansion ? "text-amber-300 fill-amber-300" : ""}
-                />
-                <span>HyDE Expansion</span>
-                <span
-                  className={`text-[9px] px-1 py-0.2 rounded font-semibold uppercase ${
-                    queryExpansion
-                      ? "bg-white/20 text-white"
-                      : "bg-[var(--color-bg-tertiary)] text-[var(--color-text-tertiary)]"
-                  }`}
-                >
-                  {queryExpansion ? "ON" : "OFF"}
+          {/* Controls */}
+          <div className="bg-[var(--surface-card)] border border-[var(--border)] rounded-xl p-4 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              {/* Strategy buttons */}
+              <div className="flex items-center gap-1.5">
+                <span className="text-[12px] font-medium text-[var(--text-muted)] mr-1">
+                  Search
                 </span>
-              </button>
-
-              {/* Model Provider Selector Dropdown */}
-              <div className="relative" ref={modelDropdownRef}>
-                <button
-                  type="button"
-                  onClick={() => setModelDropdownOpen((prev) => !prev)}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] hover:border-[var(--color-border-hover)] text-[var(--color-text)] transition-colors cursor-pointer"
-                  title="Select LLM generation model and provider"
-                >
-                  <Cpu size={13} className="text-[var(--color-primary)]" />
-                  <span>{activeModel.name}</span>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-primary)]/10 text-[var(--color-primary)] uppercase font-semibold">
-                    {activeModel.badge}
-                  </span>
-                  <ChevronDown size={12} className="text-[var(--color-text-tertiary)]" />
-                </button>
-
-                {modelDropdownOpen && (
-                  <div className="absolute right-0 mt-1 w-80 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-xl shadow-xl z-30 p-2 text-xs space-y-2">
-                    <div className="px-2 py-1 text-[11px] font-semibold text-[var(--color-text-tertiary)] uppercase tracking-wider border-b border-[var(--color-border)] pb-1.5">
-                      LLM Provider & Model
-                    </div>
-
-                    <div className="max-h-72 overflow-y-auto space-y-1">
-                      {(["Google Gemini", "Groq Cloud", "Local Ollama"] as const).map(
-                        (groupName) => {
-                          const groupModels = AVAILABLE_MODELS.filter(
-                            (m) => m.group === groupName,
-                          );
-                          return (
-                            <div key={groupName} className="space-y-0.5">
-                              <div className="px-2 pt-1.5 pb-0.5 text-[10px] font-bold text-[var(--color-text-tertiary)] uppercase">
-                                {groupName}
-                              </div>
-                              {groupModels.map((m) => {
-                                const isSelected = selectedModel === m.id;
-                                return (
-                                  <button
-                                    key={m.id}
-                                    type="button"
-                                    onClick={() => {
-                                      setSelectedModel(m.id);
-                                      setSelectedProvider(m.provider);
-                                      setModelDropdownOpen(false);
-                                    }}
-                                    className={`w-full text-left px-2 py-1.5 rounded-lg flex items-start justify-between gap-2 transition-colors cursor-pointer ${
-                                      isSelected
-                                        ? "bg-[var(--color-primary)]/10 text-[var(--color-primary)] font-medium"
-                                        : "hover:bg-[var(--color-bg-secondary)] text-[var(--color-text)]"
-                                    }`}
-                                  >
-                                    <div className="flex-1 truncate">
-                                      <div className="flex items-center gap-1.5">
-                                        <span>{m.name}</span>
-                                        <span className="text-[9px] px-1 py-0.2 rounded bg-[var(--color-bg-tertiary)] text-[var(--color-text-tertiary)] uppercase font-semibold">
-                                          {m.badge}
-                                        </span>
-                                      </div>
-                                      <div className="text-[10px] text-[var(--color-text-tertiary)] truncate">
-                                        {m.description}
-                                      </div>
-                                    </div>
-                                    {isSelected && <Check size={14} className="shrink-0 mt-0.5" />}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          );
-                        },
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Document Scope Dropdown */}
-              {docs.length > 0 && (
-                <div className="relative" ref={dropdownRef}>
+                {MODES.map((m) => (
                   <button
+                    key={m.value}
                     type="button"
-                    onClick={() => setDropdownOpen((prev) => !prev)}
-                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
-                      selectedDocIds.length > 0
-                        ? "bg-[var(--color-primary)]/10 text-[var(--color-primary)] border-[var(--color-primary)]/30 hover:bg-[var(--color-primary)]/20"
-                        : "bg-[var(--color-bg)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-hover)]"
+                    onClick={() => setMode(m.value)}
+                    className={`px-2.5 py-1.5 text-[12px] rounded-lg border transition-colors ${
+                      mode === m.value
+                        ? "bg-[var(--accent)] text-white border-[var(--accent)] font-medium"
+                        : "border-[var(--border)] hover:bg-[var(--surface-raised)] text-[var(--text-secondary)]"
                     }`}
                   >
-                    <Filter size={13} />
-                    <span>
-                      {selectedDocIds.length === 0
-                        ? `Scope: All (${docs.length})`
-                        : `Scope: ${selectedDocIds.length}`}
-                    </span>
-                    <ChevronDown size={12} />
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Query expansion toggle */}
+                <button
+                  type="button"
+                  onClick={() => setQueryExpansion((prev) => !prev)}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium rounded-lg border transition-colors cursor-pointer ${
+                    queryExpansion
+                      ? "bg-[var(--accent)] text-white border-[var(--accent)]"
+                      : "bg-[var(--surface)] border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--surface-raised)]"
+                  }`}
+                  title="Generate alternate query variations to maximize retrieval recall"
+                >
+                  HyDE
+                  <span
+                    className={`text-[10px] px-1 rounded font-medium ${
+                      queryExpansion
+                        ? "bg-white/20 text-white"
+                        : "bg-[var(--surface-raised)] text-[var(--text-muted)]"
+                    }`}
+                  >
+                    {queryExpansion ? "on" : "off"}
+                  </span>
+                </button>
+
+                {/* Model selector */}
+                <div className="relative" ref={modelDropdownRef}>
+                  <button
+                    type="button"
+                    onClick={() => setModelDropdownOpen((prev) => !prev)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium rounded-lg border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-raised)] text-[var(--text-primary)] transition-colors cursor-pointer"
+                    title="Select generation model"
+                  >
+                    <span>{activeModel.name}</span>
+                    <ChevronDown size={12} strokeWidth={1.5} className="text-[var(--text-muted)]" />
                   </button>
 
-                  {dropdownOpen && (
-                    <div className="absolute right-0 mt-1 w-72 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-xl shadow-xl z-30 p-2 text-xs space-y-1">
-                      <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--color-border)] pb-2 mb-1">
-                        <span className="font-semibold text-[var(--color-text)]">
-                          Target Documents
-                        </span>
-                        <div className="flex gap-2">
-                          <button
-                            type="button"
-                            onClick={selectAllDocs}
-                            className="text-[var(--color-primary)] hover:underline"
-                          >
-                            All
-                          </button>
-                          <span className="text-[var(--color-text-tertiary)]">|</span>
-                          <button
-                            type="button"
-                            onClick={clearDocSelection}
-                            className="text-[var(--color-text-tertiary)] hover:underline"
-                          >
-                            Reset
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="max-h-48 overflow-y-auto space-y-0.5">
-                        {docs.map((d: Document) => {
-                          const isChecked = selectedDocIds.includes(d.id);
-                          return (
-                            <label
-                              key={d.id}
-                              className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--color-bg-secondary)] cursor-pointer text-[var(--color-text)] select-none"
-                            >
-                              <input
-                                type="checkbox"
-                                checked={isChecked}
-                                onChange={() => toggleDoc(d.id)}
-                                className="accent-[var(--color-primary)] rounded"
-                              />
-                              <span className="truncate flex-1" title={d.filename}>
-                                {d.filename}
-                              </span>
-                              <span className="text-[10px] text-[var(--color-text-tertiary)] uppercase font-mono">
-                                {d.file_type}
-                              </span>
-                            </label>
-                          );
-                        })}
+                  {modelDropdownOpen && (
+                    <div className="absolute right-0 mt-1 w-72 bg-[var(--surface-card)] border border-[var(--border)] rounded-xl shadow-lg z-30 p-2 text-[12px]">
+                      <div className="max-h-72 overflow-y-auto space-y-1">
+                        {(["Google Gemini", "Groq Cloud", "Local Ollama"] as const).map(
+                          (groupName) => {
+                            const groupModels = AVAILABLE_MODELS.filter((m) => m.group === groupName);
+                            return (
+                              <div key={groupName} className="space-y-0.5">
+                                <div className="px-2 pt-2 pb-1 text-[11px] font-medium text-[var(--text-muted)]">
+                                  {groupName}
+                                </div>
+                                {groupModels.map((m) => {
+                                  const isSelected = selectedModel === m.id;
+                                  return (
+                                    <button
+                                      key={m.id}
+                                      type="button"
+                                      onClick={() => {
+                                        setSelectedModel(m.id);
+                                        setSelectedProvider(m.provider);
+                                        setModelDropdownOpen(false);
+                                      }}
+                                      className={`w-full text-left px-2 py-1.5 rounded-lg flex items-center justify-between gap-2 transition-colors cursor-pointer ${
+                                        isSelected
+                                          ? "bg-[var(--surface-raised)] text-[var(--text-primary)] font-medium"
+                                          : "hover:bg-[var(--surface-raised)] text-[var(--text-secondary)]"
+                                      }`}
+                                    >
+                                      <div className="flex-1 min-w-0">
+                                        <div className="truncate">{m.name}</div>
+                                        <div className="text-[11px] text-[var(--text-muted)] truncate">
+                                          {m.description}
+                                        </div>
+                                      </div>
+                                      {isSelected && <Check size={14} strokeWidth={1.5} className="shrink-0 text-[var(--accent-fg)]" />}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            );
+                          },
+                        )}
                       </div>
                     </div>
                   )}
                 </div>
-              )}
+
+                {/* Document scope */}
+                {docs.length > 0 && (
+                  <div className="relative" ref={dropdownRef}>
+                    <button
+                      type="button"
+                      onClick={() => setDropdownOpen((prev) => !prev)}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium rounded-lg border transition-colors cursor-pointer ${
+                        selectedDocIds.length > 0
+                          ? "bg-[var(--accent)]/10 text-[var(--accent-fg)] border-[var(--accent)]/30 hover:bg-[var(--accent)]/15"
+                          : "bg-[var(--surface)] border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--surface-raised)]"
+                      }`}
+                    >
+                      <Filter size={13} strokeWidth={1.5} />
+                      <span>
+                        {selectedDocIds.length === 0
+                          ? `All docs (${docs.length})`
+                          : `${selectedDocIds.length} selected`}
+                      </span>
+                      <ChevronDown size={12} strokeWidth={1.5} />
+                    </button>
+
+                    {dropdownOpen && (
+                      <div className="absolute right-0 mt-1 w-72 bg-[var(--surface-card)] border border-[var(--border)] rounded-xl shadow-lg z-30 p-2 text-[12px] space-y-1">
+                        <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--border)] pb-2 mb-1">
+                          <span className="font-medium text-[var(--text-primary)]">
+                            Filter documents
+                          </span>
+                          <div className="flex gap-2 text-[11px]">
+                            <button type="button" onClick={selectAllDocs} className="text-[var(--accent-fg)] hover:underline">
+                              All
+                            </button>
+                            <span className="text-[var(--text-muted)]">|</span>
+                            <button type="button" onClick={clearDocSelection} className="text-[var(--text-muted)] hover:underline">
+                              Reset
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="max-h-48 overflow-y-auto space-y-0.5">
+                          {docs.map((d: Document) => {
+                            const isChecked = selectedDocIds.includes(d.id);
+                            return (
+                              <label
+                                key={d.id}
+                                className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--surface-raised)] cursor-pointer text-[var(--text-primary)] select-none"
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={isChecked}
+                                  onChange={() => toggleDoc(d.id)}
+                                />
+                                <span className="truncate flex-1" title={d.filename}>
+                                  {d.filename}
+                                </span>
+                                <span className="text-[10px] text-[var(--text-muted)] font-mono">
+                                  {d.file_type}
+                                </span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
+
+            {/* Alpha slider */}
+            {isHybrid && (
+              <div className="flex items-center gap-4 pt-2 border-t border-[var(--border)]">
+                <label className="text-[12px] font-medium text-[var(--text-secondary)] w-28">
+                  Alpha: <span className="font-mono tabular-nums">{alpha.toFixed(2)}</span>
+                </label>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={alpha}
+                  onChange={(e) => setAlpha(+e.target.value)}
+                  className="flex-1"
+                />
+                <span className="text-[11px] text-[var(--text-muted)] w-28 text-right font-mono">
+                  Dense - BM25
+                </span>
+              </div>
+            )}
           </div>
 
-          {/* Selected Document Chips */}
+          {/* Selected doc chips */}
           {selectedDocIds.length > 0 && (
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-xs text-[var(--color-text-tertiary)] flex items-center gap-1">
-                <FileText size={12} />
-                Filtering by:
+              <span className="text-[12px] text-[var(--text-muted)] flex items-center gap-1">
+                <FileText size={12} strokeWidth={1.5} />
+                Filtered:
               </span>
               {selectedDocIds.map((id) => {
                 const doc = docs.find((d: Document) => d.id === id);
                 return (
                   <span
                     key={id}
-                    className="inline-flex items-center gap-1 px-2 py-0.5 bg-[var(--color-primary)]/10 text-[var(--color-primary)] rounded-md text-xs font-medium"
+                    className="inline-flex items-center gap-1 px-2 py-0.5 bg-[var(--surface-raised)] text-[var(--text-secondary)] rounded-lg text-[12px]"
                   >
                     <span className="max-w-[150px] truncate">
                       {doc ? doc.filename : id.slice(0, 8)}
@@ -1053,10 +962,9 @@ export default function QA() {
                     <button
                       type="button"
                       onClick={() => removeDoc(id)}
-                      className="hover:opacity-75 focus:outline-none"
-                      title="Remove filter"
+                      className="hover:text-[var(--text-primary)] transition-colors"
                     >
-                      <X size={12} />
+                      <X size={12} strokeWidth={1.5} />
                     </button>
                   </span>
                 );
@@ -1064,47 +972,21 @@ export default function QA() {
               <button
                 type="button"
                 onClick={clearDocSelection}
-                className="text-xs text-[var(--color-text-tertiary)] hover:text-[var(--color-text)] underline ml-1"
+                className="text-[12px] text-[var(--text-muted)] hover:text-[var(--text-primary)] underline ml-1"
               >
                 Clear all
               </button>
             </div>
           )}
 
-          {/* Alpha slider */}
-          {isHybrid && (
-            <div className="flex items-center gap-4 px-3 py-2 bg-[var(--color-bg-secondary)]/50 rounded-xl border border-[var(--color-border)]">
-              <label className="text-xs font-medium text-[var(--color-text-secondary)] w-28">
-                Alpha: {alpha.toFixed(2)}
-              </label>
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.05}
-                value={alpha}
-                onChange={(e) => setAlpha(+e.target.value)}
-                className="flex-1 accent-[var(--color-primary)]"
-              />
-              <span className="text-xs text-[var(--color-text-tertiary)] w-28 text-right font-mono">
-                Dense ← → BM25
-              </span>
-            </div>
-          )}
-
-          {/* Conversation Thread */}
+          {/* Conversation */}
           <div className="space-y-4 min-h-[160px]">
             {messages.length === 0 && !sse.isStreaming && (
-              <div className="text-center py-12 px-4 rounded-2xl border border-dashed border-[var(--color-border)] bg-[var(--color-bg-secondary)]/30 space-y-3">
-                <div className="w-12 h-12 rounded-full bg-[var(--color-primary)]/10 text-[var(--color-primary)] flex items-center justify-center mx-auto">
-                  <Sparkles size={24} />
-                </div>
-                <h3 className="font-semibold text-[var(--color-text)]">
-                  Ask anything about your ingested documents
-                </h3>
-                <p className="text-xs text-[var(--color-text-secondary)] max-w-md mx-auto">
-                  QueryFusion uses Hybrid Dense + Sparse BM25 retrieval, Cross-Encoder reranking,
-                  HyDE query expansion, and Corrective RAG (CRAG) self-healing.
+              <div className="text-center py-16 text-[var(--text-muted)]">
+                <MessageSquare size={32} strokeWidth={1.5} className="mx-auto mb-3 opacity-40" />
+                <p className="text-[14px] text-[var(--text-secondary)]">Ask a question about your documents</p>
+                <p className="text-[12px] mt-1">
+                  Retrieval, reranking, and verification happen automatically
                 </p>
               </div>
             )}
@@ -1112,53 +994,49 @@ export default function QA() {
             {messages.map((m) => (
               <div
                 key={m.id}
-                className={`flex flex-col ${
-                  m.role === "user" ? "items-end" : "items-start"
-                }`}
+                className={`flex flex-col ${m.role === "user" ? "items-end" : "items-start"}`}
               >
-                {/* Speaker Label */}
-                <div className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-tertiary)] mb-1 px-1">
+                {/* Speaker */}
+                <div className="flex items-center gap-1.5 text-[11px] text-[var(--text-muted)] mb-1 px-1">
                   {m.role === "user" ? (
                     <>
                       <span>You</span>
-                      <User size={12} />
-                      <span>• {m.timestamp}</span>
+                      <User size={12} strokeWidth={1.5} />
+                      <span>{m.timestamp}</span>
                     </>
                   ) : (
                     <>
-                      <Bot size={13} className="text-[var(--color-primary)]" />
-                      <span className="font-medium text-[var(--color-text)]">Assistant</span>
-                      <span>• {m.completed?.model || activeModel.name}</span>
-                      <span>• {m.timestamp}</span>
+                      <span className="text-[var(--text-secondary)] font-medium">Assistant</span>
+                      <span>{m.completed?.model || activeModel.name}</span>
+                      <span>{m.timestamp}</span>
                     </>
                   )}
                 </div>
 
-                {/* Bubble Content */}
+                {/* Bubble */}
                 <div
-                  className={`max-w-[85%] rounded-2xl p-4 text-sm shadow-xs ${
+                  className={`max-w-[85%] rounded-xl p-4 text-[13px] ${
                     m.role === "user"
-                      ? "bg-[var(--color-primary)] text-white rounded-tr-xs"
-                      : "bg-[var(--color-bg-secondary)] text-[var(--color-text)] border border-[var(--color-border)] rounded-tl-xs space-y-3"
+                      ? "bg-[var(--accent)] text-white rounded-tr-sm"
+                      : "bg-[var(--surface-card)] text-[var(--text-primary)] border border-[var(--border)] rounded-tl-sm space-y-3"
                   }`}
                 >
-                  {/* Contextualized Query Tag */}
+                  {/* Contextualized query */}
                   {m.contextualizedQuery && (
-                    <div className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-md bg-[var(--color-primary)]/10 text-[var(--color-primary)] font-mono">
-                      <Search size={11} />
-                      <span>Contextualized search: &ldquo;{m.contextualizedQuery}&rdquo;</span>
+                    <div className="flex items-center gap-1.5 text-[11px] px-2.5 py-1.5 rounded-lg bg-[var(--surface-raised)] text-[var(--accent-fg)] font-mono">
+                      <Search size={11} strokeWidth={1.5} />
+                      <span>Reformulated: "{m.contextualizedQuery}"</span>
                     </div>
                   )}
 
-                  {/* Multi-Query Expanded Tags */}
+                  {/* HyDE expansions */}
                   {m.expandedQueries && m.expandedQueries.length > 1 && (
-                    <div className="flex flex-wrap items-center gap-1 text-[10px] px-2.5 py-1 rounded-md bg-amber-500/10 text-amber-700 dark:text-amber-300">
-                      <Sparkles size={11} className="text-amber-500 shrink-0" />
-                      <span className="font-semibold">HyDE Expansions:</span>
+                    <div className="flex flex-wrap items-center gap-1 text-[11px] px-2.5 py-1.5 rounded-lg bg-[var(--surface-raised)] text-[var(--text-secondary)]">
+                      <span className="font-medium">Expanded:</span>
                       {m.expandedQueries.slice(1).map((eq, i) => (
                         <span
                           key={i}
-                          className="px-1.5 py-0.2 rounded bg-amber-500/20 font-mono truncate max-w-[200px]"
+                          className="px-1.5 py-0.5 rounded bg-[var(--surface-deep)] font-mono text-[10px] truncate max-w-[200px]"
                           title={eq}
                         >
                           {eq}
@@ -1167,131 +1045,114 @@ export default function QA() {
                     </div>
                   )}
 
-                  {/* CRAG Self-Correction Banner */}
+                  {/* CRAG correction */}
                   {m.wasCorrected && (
-                    <div className="flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-md bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20">
-                      <ShieldCheck size={13} className="text-emerald-500 shrink-0" />
+                    <div className="flex items-center gap-1.5 text-[11px] px-2.5 py-1.5 rounded-lg bg-[var(--positive)]/10 text-[var(--positive)] border border-[var(--positive)]/20">
+                      <CheckCircle2 size={13} strokeWidth={1.5} className="shrink-0" />
                       <span>
-                        Self-Corrected via CRAG:{" "}
-                        <span className="font-medium italic">
-                          {m.correctionReason || "Re-retrieved with broadened scope"}
-                        </span>
+                        Self-corrected: {m.correctionReason || "Re-retrieved with broader scope"}
                       </span>
                     </div>
                   )}
 
-                  {/* Insufficient context warning */}
+                  {/* Insufficient context */}
                   {m.has_sufficient_context === false && (
-                    <div className="flex items-center gap-2 p-2.5 bg-[var(--color-warning)]/10 text-[var(--color-warning)] rounded-lg text-xs">
-                      <AlertCircle size={15} />
+                    <div className="flex items-center gap-2 p-2.5 bg-[var(--warning)]/10 text-[var(--warning)] rounded-lg text-[12px]">
+                      <AlertCircle size={14} strokeWidth={1.5} />
                       <span>
-                        Insufficient context.{" "}
-                        {m.fallback_reason && <span>{m.fallback_reason}</span>}
+                        Insufficient context.{m.fallback_reason && ` ${m.fallback_reason}`}
                       </span>
                     </div>
                   )}
 
-                  {/* Main message text */}
+                  {/* Message content */}
                   {m.role === "user" ? (
-                    <div className="whitespace-pre-wrap">{m.content}</div>
+                    <div className="whitespace-pre-wrap leading-relaxed">{m.content}</div>
                   ) : (
-                    <div className="prose prose-sm max-w-none text-[var(--color-text)]">
+                    <div className="markdown-body max-w-none">
                       {renderAnswer(m.content, m.citations)}
                     </div>
                   )}
 
-                  {/* Verification Claims if Assistant */}
-                  {m.role === "assistant" &&
-                    m.verification?.claims &&
-                    m.verification.claims.length > 0 && (
-                      <div className="pt-2 border-t border-[var(--color-border)] space-y-1.5">
-                        <div className="flex items-center justify-between text-[11px] font-semibold text-[var(--color-text-tertiary)] uppercase">
-                          <span>Citation Verification</span>
-                          {m.confidence?.overall_score != null && (
-                            <ConfidenceBadge score={m.confidence.overall_score} />
-                          )}
-                        </div>
-                        <div className="space-y-1">
-                          {m.verification.claims.map((c, i) => (
-                            <div key={i} className="flex items-start gap-2 text-xs">
-                              <span
-                                className={`shrink-0 px-1.5 py-0.5 rounded font-mono font-semibold text-[10px] ${
-                                  c.verdict === "SUPPORTED"
-                                    ? "bg-[var(--color-success)]/10 text-[var(--color-success)]"
-                                    : c.verdict === "UNSUPPORTED"
-                                      ? "bg-[var(--color-danger)]/10 text-[var(--color-danger)]"
-                                      : "bg-[var(--color-warning)]/10 text-[var(--color-warning)]"
-                                }`}
-                              >
-                                {c.verdict}
-                              </span>
-                              <span className="text-[var(--color-text-secondary)] text-[12px]">
-                                {c.claim_text}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
+                  {/* Verification claims */}
+                  {m.role === "assistant" && m.verification?.claims && m.verification.claims.length > 0 && (
+                    <div className="pt-3 border-t border-[var(--border)] space-y-2">
+                      <div className="flex items-center justify-between text-[11px] text-[var(--text-muted)]">
+                        <span className="font-medium">Verification</span>
+                        {m.confidence?.overall_score != null && (
+                          <ConfidenceBadge score={m.confidence.overall_score} />
+                        )}
                       </div>
-                    )}
+                      <div className="space-y-1">
+                        {m.verification.claims.map((c, i) => (
+                          <div key={i} className="flex items-start gap-2 text-[12px]">
+                            <span
+                              className={`shrink-0 px-1.5 py-0.5 rounded font-mono font-medium text-[10px] ${
+                                c.verdict === "SUPPORTED"
+                                  ? "bg-[var(--positive)]/10 text-[var(--positive)]"
+                                  : c.verdict === "UNSUPPORTED"
+                                    ? "bg-[var(--negative)]/10 text-[var(--negative)]"
+                                    : "bg-[var(--warning)]/10 text-[var(--warning)]"
+                              }`}
+                            >
+                              {c.verdict}
+                            </span>
+                            <span className="text-[var(--text-secondary)]">{c.claim_text}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
-                  {/* Telemetry pill & Actions for Assistant */}
+                  {/* Telemetry and actions */}
                   {m.role === "assistant" && (
-                    <div className="pt-2 border-t border-[var(--color-border)] flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <div className="pt-2 border-t border-[var(--border)] flex flex-wrap items-center justify-between gap-2 text-[11px]">
                       {m.completed && (
                         <div className="flex flex-wrap items-center gap-1.5">
-                          <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[var(--color-primary)]/10 text-[var(--color-primary)] text-[11px] font-medium">
-                            <Zap size={12} className="text-amber-500 fill-amber-500" />
-                            <span>
-                              {m.completed.total_ms ??
-                                Math.round(
-                                  (m.completed.retrieval_ms ?? 0) +
-                                    (m.completed.generation_ms ?? 0),
-                                )}{" "}
-                              ms
+                          <span className="font-mono tabular-nums text-[var(--text-muted)]">
+                            {m.completed.total_ms ??
+                              Math.round((m.completed.retrieval_ms ?? 0) + (m.completed.generation_ms ?? 0))}ms
+                          </span>
+                          {m.completed.cached && (
+                            <span className="text-[10px] px-1 py-0.5 rounded bg-[var(--surface-raised)] text-[var(--positive)] font-medium">
+                              cached
                             </span>
-                            {m.completed.cached && (
-                              <span className="ml-1 text-[9px] px-1 py-0.2 rounded bg-emerald-500/10 text-emerald-600 font-semibold uppercase">
-                                Cached
-                              </span>
-                            )}
-                          </div>
-
-                          {m.completed.stages &&
-                            Object.keys(m.completed.stages).length > 0 && (
-                              <div className="hidden sm:flex flex-wrap items-center gap-1 text-[var(--color-text-secondary)]">
-                                {Object.entries(m.completed.stages).map(([stg, ms]) => (
-                                  <span
-                                    key={stg}
-                                    className="px-1.5 py-0.5 rounded bg-[var(--color-bg-tertiary)] text-[10px] font-mono"
-                                  >
-                                    {stg}: {ms}ms
-                                  </span>
-                                ))}
-                              </div>
-                            )}
+                          )}
+                          {m.completed.stages && Object.keys(m.completed.stages).length > 0 && (
+                            <div className="hidden sm:flex flex-wrap items-center gap-1 text-[var(--text-muted)]">
+                              {Object.entries(m.completed.stages).map(([stg, ms]) => (
+                                <span
+                                  key={stg}
+                                  className="px-1.5 py-0.5 rounded bg-[var(--surface-raised)] text-[10px] font-mono tabular-nums"
+                                >
+                                  {stg} {ms}ms
+                                </span>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       )}
 
-                      <div className="flex items-center gap-1.5 ml-auto">
+                      <div className="flex items-center gap-1 ml-auto">
                         <button
                           type="button"
                           onClick={() => handleCopy(m.id, m.content)}
-                          className="p-1 text-[var(--color-text-tertiary)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] rounded transition-colors"
-                          title="Copy answer"
+                          className="p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-raised)] rounded-lg transition-colors"
+                          title="Copy"
                         >
                           {copiedId === m.id ? (
-                            <Check size={13} className="text-[var(--color-success)]" />
+                            <Check size={13} strokeWidth={1.5} className="text-[var(--positive)]" />
                           ) : (
-                            <Copy size={13} />
+                            <Copy size={13} strokeWidth={1.5} />
                           )}
                         </button>
                         <button
                           type="button"
                           onClick={() => handleExportMarkdown(m)}
-                          className="p-1 text-[var(--color-text-tertiary)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] rounded transition-colors"
-                          title="Export this response as Markdown"
+                          className="p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-raised)] rounded-lg transition-colors"
+                          title="Export"
                         >
-                          <Download size={13} />
+                          <Download size={13} strokeWidth={1.5} />
                         </button>
                       </div>
                     </div>
@@ -1300,24 +1161,21 @@ export default function QA() {
               </div>
             ))}
 
-            {/* Live Streaming Assistant State */}
+            {/* Streaming state */}
             {sse.isStreaming && (
               <div className="flex flex-col items-start space-y-2">
-                <div className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-tertiary)] px-1">
-                  <Bot size={13} className="text-[var(--color-primary)] animate-pulse" />
-                  <span className="font-medium text-[var(--color-text)]">
-                    Assistant is researching ({activeModel.name})...
+                <div className="flex items-center gap-1.5 text-[11px] text-[var(--text-muted)] px-1">
+                  <Loader2 size={13} strokeWidth={1.5} className="animate-spin text-[var(--accent-fg)]" />
+                  <span className="text-[var(--text-secondary)]">
+                    Searching ({activeModel.name})
                   </span>
                 </div>
 
-                <div className="w-full max-w-[85%] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-2xl rounded-tl-xs p-4 space-y-3 shadow-xs">
-                  {/* Stage Progress Badges */}
+                <div className="w-full max-w-[85%] bg-[var(--surface-card)] border border-[var(--border)] rounded-xl rounded-tl-sm p-4 space-y-3">
                   <div className="flex flex-wrap gap-1.5">
                     {STAGE_ORDER.map((s) => {
                       const idx = sse.stages.indexOf(s);
-                      const nextIdx = sse.stages.indexOf(
-                        STAGE_ORDER[STAGE_ORDER.indexOf(s) + 1],
-                      );
+                      const nextIdx = sse.stages.indexOf(STAGE_ORDER[STAGE_ORDER.indexOf(s) + 1]);
                       const done = idx !== -1 && (nextIdx !== -1 || !sse.isStreaming);
                       const active = idx !== -1 && !done;
                       if (idx === -1 && !sse.stages.includes(s)) {
@@ -1332,28 +1190,27 @@ export default function QA() {
                     })}
                   </div>
 
-                  {/* Streaming Partial Answer */}
                   {sse.answer && (sse.answer as { answer?: string }).answer ? (
-                    <div className="prose prose-sm max-w-none text-[var(--color-text)]">
+                    <div className="markdown-body max-w-none">
                       {renderAnswer(
                         (sse.answer as { answer: string }).answer,
                         (sse.answer as { citations?: ChatMessage["citations"] }).citations,
                       )}
                     </div>
                   ) : (
-                    <div className="flex items-center gap-2 text-xs text-[var(--color-text-tertiary)] py-2">
-                      <Loader2 size={14} className="animate-spin text-[var(--color-primary)]" />
-                      <span>Retrieving passages & formulating response...</span>
+                    <div className="flex items-center gap-2 text-[12px] text-[var(--text-muted)] py-2">
+                      <Loader2 size={14} strokeWidth={1.5} className="animate-spin text-[var(--accent-fg)]" />
+                      <span>Retrieving passages...</span>
                     </div>
                   )}
                 </div>
               </div>
             )}
 
-            {/* Stream Error Display */}
+            {/* Stream error */}
             {sse.error && !sse.isStreaming && (
-              <div className="flex items-center gap-2 p-3 bg-[var(--color-danger)]/10 text-[var(--color-danger)] rounded-xl text-xs">
-                <AlertCircle size={16} />
+              <div className="flex items-center gap-2 p-3 bg-[var(--negative)]/10 text-[var(--negative)] rounded-xl text-[12px]">
+                <AlertCircle size={16} strokeWidth={1.5} />
                 <span>{sse.error}</span>
               </div>
             )}
@@ -1361,38 +1218,35 @@ export default function QA() {
             <div ref={messagesEndRef} />
           </div>
 
-          {/* Input Bar Form */}
-          <form onSubmit={handleSubmit} className="sticky bottom-4 z-10 space-y-2">
-            <div className="flex gap-2 p-1.5 bg-[var(--color-bg)]/80 backdrop-blur-md rounded-2xl border border-[var(--color-border)] shadow-lg">
+          {/* Input */}
+          <form onSubmit={handleSubmit} className="sticky bottom-4 z-10">
+            <div className="flex gap-2 p-1.5 bg-[var(--surface-card)] rounded-xl border border-[var(--border)] shadow-lg">
               <div className="flex-1 relative flex items-center">
-                <Search
-                  size={18}
-                  className="absolute left-3.5 text-[var(--color-text-tertiary)]"
-                />
+                <Search size={16} strokeWidth={1.5} className="absolute left-3 text-[var(--text-muted)]" />
                 <input
                   type="text"
                   value={question}
                   onChange={(e) => setQuestion(e.target.value)}
                   placeholder={
                     messages.length > 0
-                      ? "Ask a follow-up question (context is automatically preserved)..."
-                      : "Ask a question about your documents..."
+                      ? "Ask a follow-up..."
+                      : "Ask about your documents..."
                   }
-                  className="w-full pl-10 pr-4 py-2.5 bg-transparent text-sm focus:outline-none text-[var(--color-text)] placeholder:text-[var(--color-text-tertiary)]"
+                  className="w-full pl-9 pr-4 py-2.5 bg-transparent text-[13px] focus:outline-none text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
                 />
               </div>
               <button
                 type="submit"
                 disabled={sse.isStreaming || !question.trim()}
-                className="px-5 py-2.5 bg-[var(--color-primary)] text-white rounded-xl text-xs font-semibold hover:bg-[var(--color-primary-hover)] disabled:opacity-50 transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+                className="px-5 py-2.5 bg-[var(--accent)] text-white rounded-lg text-[13px] font-medium hover:opacity-90 disabled:opacity-50 transition-colors flex items-center gap-1.5 cursor-pointer"
               >
                 {sse.isStreaming ? (
                   <>
-                    <Loader2 size={14} className="animate-spin" />
-                    <span>Searching</span>
+                    <Loader2 size={14} strokeWidth={1.5} className="animate-spin" />
+                    Searching
                   </>
                 ) : (
-                  <span>Ask</span>
+                  "Ask"
                 )}
               </button>
             </div>
@@ -1400,26 +1254,20 @@ export default function QA() {
         </div>
       </div>
 
-      {/* Side-by-Side Split-Screen Citation Inspector Drawer */}
+      {/* Citation inspector drawer */}
       {inspectCitation && (
-        <aside className="fixed top-16 right-0 bottom-0 w-full sm:w-[400px] lg:w-[440px] bg-[var(--color-bg)] border-l border-[var(--color-border)] shadow-2xl z-30 flex flex-col transition-transform animate-in slide-in-from-right duration-200">
-          {/* Drawer Header */}
-          <div className="flex items-center justify-between p-4 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)]/50">
+        <aside className="fixed top-0 right-0 bottom-0 w-full sm:w-[400px] lg:w-[440px] bg-[var(--surface)] border-l border-[var(--border)] z-30 flex flex-col">
+          {/* Drawer header */}
+          <div className="flex items-center justify-between px-5 h-14 border-b border-[var(--border)] shrink-0">
             <div className="flex items-center gap-2">
-              <Layers size={18} className="text-[var(--color-primary)]" />
-              <div>
-                <h3 className="font-semibold text-sm text-[var(--color-text)] flex items-center gap-1.5">
-                  <span>Citation Inspector</span>
-                  <span className="px-1.5 py-0.5 rounded bg-[var(--color-primary)]/10 text-[var(--color-primary)] font-mono text-xs font-bold">
-                    {inspectCitation.citation_id}
-                  </span>
-                </h3>
-                <p className="text-[10px] text-[var(--color-text-tertiary)]">
-                  Verbatim evidence & adjacent document context
-                </p>
-              </div>
+              <Layers size={16} strokeWidth={1.5} className="text-[var(--text-muted)]" />
+              <h3 className="font-medium text-[14px] flex items-center gap-2">
+                Citation
+                <span className="px-1.5 py-0.5 rounded bg-[var(--surface-raised)] text-[var(--accent-fg)] font-mono text-[12px]">
+                  {inspectCitation.citation_id}
+                </span>
+              </h3>
             </div>
-
             <div className="flex items-center gap-1">
               <button
                 type="button"
@@ -1431,182 +1279,178 @@ export default function QA() {
                       inspectCitation.chunk_id,
                   )
                 }
-                className="p-1.5 rounded-lg text-[var(--color-text-tertiary)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors cursor-pointer"
+                className="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-raised)] transition-colors cursor-pointer"
                 title="Copy chunk text"
               >
                 {copiedId === "inspect-chunk" ? (
-                  <Check size={15} className="text-[var(--color-success)]" />
+                  <Check size={15} strokeWidth={1.5} className="text-[var(--positive)]" />
                 ) : (
-                  <Copy size={15} />
+                  <Copy size={15} strokeWidth={1.5} />
                 )}
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  setInspectCitation(null);
-                  setCitationContextData(null);
-                }}
-                className="p-1.5 rounded-lg text-[var(--color-text-tertiary)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] transition-colors cursor-pointer"
-                title="Close drawer"
+                onClick={() => { setInspectCitation(null); setCitationContextData(null); }}
+                className="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-raised)] transition-colors cursor-pointer"
+                title="Close"
               >
-                <X size={16} />
+                <X size={16} strokeWidth={1.5} />
               </button>
             </div>
           </div>
 
-          {/* Drawer Body (Scrollable) */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-4 text-xs">
-            {/* Document Info Card */}
-            <div className="p-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] space-y-2">
+          {/* Drawer body */}
+          <div className="flex-1 overflow-y-auto p-5 space-y-4 text-[12px]">
+            {/* Document info */}
+            <div className="p-3 rounded-xl border border-[var(--border)] bg-[var(--surface-card)] space-y-2">
               <div className="flex items-center gap-2">
-                <FileText size={16} className="text-[var(--color-primary)] shrink-0" />
-                <span className="font-semibold text-sm truncate flex-1" title={citationContextData?.document?.filename}>
-                  {citationContextData?.document?.filename || "Source Document"}
+                <FileText size={14} strokeWidth={1.5} className="text-[var(--text-muted)] shrink-0" />
+                <span className="font-medium text-[13px] truncate flex-1" title={citationContextData?.document?.filename}>
+                  {citationContextData?.document?.filename || "Source document"}
                 </span>
-                <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-[var(--color-bg-tertiary)] text-[var(--color-text-tertiary)] font-bold">
+                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[var(--surface-raised)] text-[var(--text-muted)]">
                   {citationContextData?.document?.file_type || "doc"}
                 </span>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2 text-[11px] text-[var(--color-text-secondary)] font-mono">
+              <div className="flex flex-wrap items-center gap-2 text-[11px] text-[var(--text-muted)] font-mono">
                 {citationContextData?.target_chunk && (
-                  <span className="px-2 py-0.5 rounded bg-[var(--color-bg-tertiary)]">
-                    Chunk {citationContextData.target_chunk.index + 1} of{" "}
-                    {citationContextData.document.total_chunks}
+                  <span className="px-2 py-0.5 rounded bg-[var(--surface-raised)] tabular-nums">
+                    Chunk {citationContextData.target_chunk.index + 1} of {citationContextData.document.total_chunks}
                   </span>
                 )}
                 {citationContextData?.target_chunk?.token_count != null && (
-                  <span className="px-2 py-0.5 rounded bg-[var(--color-bg-tertiary)]">
+                  <span className="px-2 py-0.5 rounded bg-[var(--surface-raised)] tabular-nums">
                     {citationContextData.target_chunk.token_count} tokens
                   </span>
                 )}
                 {citationContextData?.document?.chunking_strategy && (
-                  <span className="px-2 py-0.5 rounded bg-[var(--color-bg-tertiary)]">
+                  <span className="px-2 py-0.5 rounded bg-[var(--surface-raised)]">
                     {citationContextData.document.chunking_strategy}
                   </span>
                 )}
               </div>
 
-              <div className="text-[10px] text-[var(--color-text-tertiary)] font-mono truncate">
-                ID: {inspectCitation.chunk_id}
+              <div className="text-[10px] text-[var(--text-muted)] font-mono truncate">
+                {inspectCitation.chunk_id}
               </div>
             </div>
 
-            {/* Inspector Tab Switcher */}
-            <div className="flex rounded-lg bg-[var(--color-bg-secondary)] p-1 border border-[var(--color-border)]">
+            {/* Tab switcher */}
+            <div className="flex rounded-lg bg-[var(--surface-card)] p-1 border border-[var(--border)]">
               <button
                 type="button"
                 onClick={() => setActiveInspectorTab("target")}
-                className={`flex-1 py-1.5 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
+                className={`flex-1 py-1.5 rounded-md text-[12px] font-medium transition-colors cursor-pointer ${
                   activeInspectorTab === "target"
-                    ? "bg-[var(--color-bg)] text-[var(--color-text)] shadow-xs"
-                    : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
+                    ? "bg-[var(--surface-raised)] text-[var(--text-primary)]"
+                    : "text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
                 }`}
               >
-                Target Evidence
+                Evidence
               </button>
               <button
                 type="button"
                 onClick={() => setActiveInspectorTab("adjacent")}
-                className={`flex-1 py-1.5 rounded-md text-xs font-semibold transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${
+                className={`flex-1 py-1.5 rounded-md text-[12px] font-medium transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${
                   activeInspectorTab === "adjacent"
-                    ? "bg-[var(--color-bg)] text-[var(--color-text)] shadow-xs"
-                    : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
+                    ? "bg-[var(--surface-raised)] text-[var(--text-primary)]"
+                    : "text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
                 }`}
               >
-                <span>Adjacent Context</span>
-                {citationLoading && <Loader2 size={11} className="animate-spin" />}
+                <span>Adjacent</span>
+                {citationLoading && <Loader2 size={11} strokeWidth={1.5} className="animate-spin" />}
               </button>
             </div>
 
-            {/* Tab 1: Target Evidence Quote */}
+            {/* Target evidence */}
             {activeInspectorTab === "target" && (
               <div className="space-y-3">
-                {inspectCitation.evidence_quote ? (
-                  <div className="space-y-1">
-                    <span className="text-[11px] font-semibold text-[var(--color-text-tertiary)] uppercase tracking-wider">
-                      Cited Grounding Quote
+                {inspectCitation.evidence_quote && (
+                  <div className="space-y-1.5">
+                    <span className="text-[11px] font-medium text-[var(--text-muted)]">
+                      Cited quote
                     </span>
-                    <div className="p-3 rounded-lg border-l-4 border-amber-500 bg-amber-500/10 text-[var(--color-text)] leading-relaxed text-xs">
-                      &ldquo;{inspectCitation.evidence_quote}&rdquo;
+                    <div className="p-3 rounded-lg border-l-2 border-[var(--accent)] bg-[var(--surface-card)] text-[var(--text-primary)] leading-relaxed text-[12px]">
+                      "{inspectCitation.evidence_quote}"
                     </div>
                   </div>
-                ) : null}
+                )}
 
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between text-[11px] font-semibold text-[var(--color-text-tertiary)] uppercase tracking-wider">
-                    <span>Full Chunk Content</span>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-[11px] text-[var(--text-muted)]">
+                    <span className="font-medium">Full chunk</span>
                     {citationContextData?.target_chunk?.section_heading && (
-                      <span className="text-[10px] text-[var(--color-primary)] font-mono truncate max-w-[200px]">
-                        § {citationContextData.target_chunk.section_heading}
+                      <span className="text-[var(--accent-fg)] font-mono truncate max-w-[200px]">
+                        {citationContextData.target_chunk.section_heading}
                       </span>
                     )}
                   </div>
-                  <div className="p-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/50 leading-relaxed text-[var(--color-text)] whitespace-pre-wrap font-mono text-[11px]">
+                  <div className="p-3 rounded-xl border border-[var(--border)] bg-[var(--surface-card)] leading-relaxed text-[var(--text-secondary)] whitespace-pre-wrap font-mono text-[11px]">
                     {citationContextData?.target_chunk?.content ||
                       inspectCitation.evidence_quote ||
-                      "Loading chunk content..."}
+                      "Loading..."}
                   </div>
                 </div>
               </div>
             )}
 
-            {/* Tab 2: Adjacent Chunks (Surrounding Narrative) */}
+            {/* Adjacent chunks */}
             {activeInspectorTab === "adjacent" && (
               <div className="space-y-4">
                 {citationLoading ? (
-                  <div className="py-8 text-center text-[var(--color-text-tertiary)] space-y-2">
-                    <Loader2 size={20} className="animate-spin mx-auto text-[var(--color-primary)]" />
-                    <p>Loading adjacent document passages...</p>
+                  <div className="py-8 text-center text-[var(--text-muted)] space-y-2">
+                    <Loader2 size={20} strokeWidth={1.5} className="animate-spin mx-auto text-[var(--accent-fg)]" />
+                    <p>Loading adjacent passages...</p>
                   </div>
                 ) : (
                   <>
-                    {/* Previous Chunk */}
+                    {/* Previous */}
                     <div className="space-y-1.5">
-                      <div className="flex items-center gap-1.5 text-[11px] font-semibold text-[var(--color-text-tertiary)] uppercase">
-                        <ChevronLeft size={13} />
+                      <div className="flex items-center gap-1.5 text-[11px] font-medium text-[var(--text-muted)]">
+                        <ChevronLeft size={13} strokeWidth={1.5} />
                         <span>
-                          Previous Chunk{" "}
+                          Previous{" "}
                           {citationContextData?.previous_chunk
                             ? `(#${citationContextData.previous_chunk.index + 1})`
-                            : "(Beginning of Document)"}
+                            : "(start of document)"}
                         </span>
                       </div>
                       {citationContextData?.previous_chunk ? (
-                        <div className="p-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/30 text-[var(--color-text-secondary)] whitespace-pre-wrap font-mono text-[11px] leading-relaxed max-h-44 overflow-y-auto">
+                        <div className="p-3 rounded-xl border border-[var(--border)] bg-[var(--surface-card)] text-[var(--text-muted)] whitespace-pre-wrap font-mono text-[11px] leading-relaxed max-h-44 overflow-y-auto">
                           {citationContextData.previous_chunk.content}
                         </div>
                       ) : (
-                        <p className="text-[11px] text-[var(--color-text-tertiary)] italic pl-1">
-                          No prior chunk exists. This is the opening section of the document.
+                        <p className="text-[11px] text-[var(--text-muted)] pl-1">
+                          No prior chunk. Opening section of document.
                         </p>
                       )}
                     </div>
 
-                    {/* Target Chunk Focus Indicator */}
-                    <div className="p-2.5 rounded-lg border border-[var(--color-primary)]/30 bg-[var(--color-primary)]/10 text-xs text-[var(--color-primary)] font-medium flex items-center justify-between">
-                      <span>Target Cited Chunk (#{((citationContextData?.target_chunk?.index ?? 0) + 1)})</span>
-                      <span className="font-bold font-mono">ACTIVE EVIDENCE</span>
+                    {/* Target indicator */}
+                    <div className="p-2.5 rounded-lg border border-[var(--accent)]/20 bg-[var(--accent)]/5 text-[12px] text-[var(--accent-fg)] font-medium flex items-center justify-between">
+                      <span>Cited chunk (#{(citationContextData?.target_chunk?.index ?? 0) + 1})</span>
+                      <span className="font-mono text-[11px]">current</span>
                     </div>
 
-                    {/* Next Chunk */}
+                    {/* Next */}
                     <div className="space-y-1.5">
-                      <div className="flex items-center gap-1.5 text-[11px] font-semibold text-[var(--color-text-tertiary)] uppercase">
-                        <ChevronRight size={13} />
+                      <div className="flex items-center gap-1.5 text-[11px] font-medium text-[var(--text-muted)]">
+                        <ChevronRight size={13} strokeWidth={1.5} />
                         <span>
-                          Next Chunk{" "}
+                          Next{" "}
                           {citationContextData?.next_chunk
                             ? `(#${citationContextData.next_chunk.index + 1})`
-                            : "(End of Document)"}
+                            : "(end of document)"}
                         </span>
                       </div>
                       {citationContextData?.next_chunk ? (
-                        <div className="p-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/30 text-[var(--color-text-secondary)] whitespace-pre-wrap font-mono text-[11px] leading-relaxed max-h-44 overflow-y-auto">
+                        <div className="p-3 rounded-xl border border-[var(--border)] bg-[var(--surface-card)] text-[var(--text-muted)] whitespace-pre-wrap font-mono text-[11px] leading-relaxed max-h-44 overflow-y-auto">
                           {citationContextData.next_chunk.content}
                         </div>
                       ) : (
-                        <p className="text-[11px] text-[var(--color-text-tertiary)] italic pl-1">
-                          No subsequent chunk. This is the conclusion of the document.
+                        <p className="text-[11px] text-[var(--text-muted)] pl-1">
+                          No subsequent chunk. End of document.
                         </p>
                       )}
                     </div>

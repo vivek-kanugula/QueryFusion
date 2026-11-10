@@ -3,12 +3,9 @@ import {
   AlertCircle,
   AlertTriangle,
   ChevronDown,
-  Database,
   File,
   FileText,
-  HardDrive,
   MessageSquare,
-  Sparkles,
   Trash2,
   Upload,
   X,
@@ -30,8 +27,8 @@ import {
 
 const STRATEGIES = ["fixed", "structure", "semantic"] as const;
 const STRATEGY_LABELS: Record<string, string> = {
-  fixed: "Fixed-Size",
-  structure: "Structure-Aware",
+  fixed: "Fixed-size",
+  structure: "Structure-aware",
   semantic: "Semantic",
 };
 
@@ -54,10 +51,10 @@ function parseApiError(error: unknown): string {
     } catch {
       if (body.trim()) return body;
     }
-    if (status === "413") return "File exceeds maximum upload size limit (10 MB).";
-    if (status === "422") return "Storage quota exceeded or document limit reached. Delete existing documents first.";
-    if (status === "409") return "Duplicate file detected.";
-    if (status === "403") return "Action forbidden: document may be protected golden evaluation data.";
+    if (status === "413") return "File exceeds maximum upload size (10 MB)";
+    if (status === "422") return "Storage quota exceeded. Delete existing documents first.";
+    if (status === "409") return "Duplicate file detected";
+    if (status === "403") return "Document is protected evaluation data";
     return `Server error (${status})`;
   }
   return msg;
@@ -122,11 +119,11 @@ export default function Documents() {
       qc.invalidateQueries({ queryKey: ["documents"] });
       qc.invalidateQueries({ queryKey: ["storage"] });
       if (res.loaded_count > 0) {
-        setDemoBanner(`Loaded ${res.loaded_count} sample documents for quick testing!`);
+        setDemoBanner(`Loaded ${res.loaded_count} sample documents`);
       } else {
-        setDemoBanner("Sample documents are already present in the database.");
+        setDemoBanner("Sample documents already present");
       }
-      setTimeout(() => setDemoBanner(null), 5000);
+      setTimeout(() => setDemoBanner(null), 4000);
     },
     onError: (err) => {
       setClientError(parseApiError(err));
@@ -148,28 +145,25 @@ export default function Documents() {
                 (1024 * 1024),
           );
 
-        // Guard 1: Single file upload limit (prevent dyno memory spike / crash)
         if (fileSizeMb > maxUploadMb) {
           setClientError(
-            `"${f.name}" (${fileSizeMb.toFixed(1)} MB) exceeds the maximum single-file upload limit (${maxUploadMb} MB). Upload blocked to protect server memory.`,
+            `"${f.name}" (${fileSizeMb.toFixed(1)} MB) exceeds the ${maxUploadMb} MB upload limit`,
           );
           return;
         }
 
-        // Guard 2: Free database storage headroom
         if (fileSizeMb > freeMb) {
           setClientError(
-            `"${f.name}" (${fileSizeMb.toFixed(1)} MB) exceeds remaining database storage (${freeMb.toFixed(1)} MB free). Delete existing documents to free up space.`,
+            `"${f.name}" (${fileSizeMb.toFixed(1)} MB) exceeds remaining storage (${freeMb.toFixed(1)} MB free)`,
           );
           return;
         }
 
-        // Guard 3: Document count limit
         const maxDocs = storage?.max_documents_count ?? 50;
         const currentDocCount = storage?.document_count ?? docs.length;
         if (currentDocCount >= maxDocs) {
           setClientError(
-            `Document count limit reached (${currentDocCount}/${maxDocs}). Delete existing documents first.`,
+            `Document limit reached (${currentDocCount}/${maxDocs}). Delete documents first.`,
           );
           return;
         }
@@ -205,16 +199,16 @@ export default function Documents() {
   };
 
   const maxDocs = storage?.max_documents_count ?? 50;
-  const docPct = Math.min(100, Math.round((docs.length / maxDocs) * 100));
   const storageUsagePct = storage?.usage_percent ?? 0;
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
+      {/* Page header */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-semibold">Documents</h2>
-          <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-            Manage, chunk, and index source materials into PostgreSQL pgvector
+          <h2 className="text-xl font-medium">Documents</h2>
+          <p className="text-[13px] text-[var(--text-secondary)] mt-1">
+            Upload, chunk, and index source materials
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -222,167 +216,93 @@ export default function Documents() {
             type="button"
             onClick={() => demoMut.mutate()}
             disabled={demoMut.isPending}
-            className="inline-flex items-center gap-2 px-3.5 py-2 text-xs font-medium rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-tertiary)] text-[var(--color-text)] transition-colors shadow-xs disabled:opacity-50 cursor-pointer"
-            title="Pre-seed sample technical documents for quick testing"
+            className="inline-flex items-center gap-2 px-3 py-2 text-[13px] font-medium rounded-lg border border-[var(--border)] bg-[var(--surface-card)] hover:bg-[var(--surface-raised)] text-[var(--text-primary)] transition-colors disabled:opacity-50 cursor-pointer"
           >
-            <Sparkles size={14} className="text-[var(--color-primary)]" />
-            {demoMut.isPending ? "Loading Samples..." : "Load Sample Docs"}
+            {demoMut.isPending ? "Loading..." : "Load samples"}
           </button>
-          <span className="text-xs text-[var(--color-text-tertiary)] flex items-center gap-1.5 pl-3 border-l border-[var(--color-border)]">
+          <span className="text-[12px] text-[var(--text-muted)] flex items-center gap-2 pl-3 border-l border-[var(--border)]">
             <span
-              className={`w-2 h-2 rounded-full ${
+              className={`w-1.5 h-1.5 rounded-full ${
                 storageUsagePct >= 85
-                  ? "bg-[var(--color-danger)] animate-pulse"
+                  ? "bg-[var(--negative)]"
                   : storageUsagePct >= 70
-                    ? "bg-[var(--color-warning)]"
-                    : "bg-[var(--color-success)]"
+                    ? "bg-[var(--warning)]"
+                    : "bg-[var(--positive)]"
               }`}
             />
             {storage
-              ? `${storage.free_mb} MB DB storage available`
-              : "Checking storage..."}
+              ? `${storage.free_mb} MB free`
+              : "Checking..."}
           </span>
         </div>
       </div>
 
-      {/* Demo Banner */}
+      {/* Demo banner */}
       {demoBanner && (
-        <div className="flex items-center gap-2.5 p-3.5 bg-[var(--color-primary)]/10 text-[var(--color-primary)] border border-[var(--color-primary)]/20 rounded-xl text-xs font-medium animate-fadeIn">
-          <Sparkles size={16} className="shrink-0" />
+        <div className="flex items-center gap-2 px-4 py-3 bg-[var(--surface-card)] text-[var(--text-secondary)] border border-[var(--border)] rounded-lg text-[13px]">
           <span>{demoBanner}</span>
         </div>
       )}
 
-      {/* Real-Time Storage & Database Health Monitor */}
-      <div className="bg-[var(--color-bg-secondary)] rounded-2xl p-5 border border-[var(--color-border)] shadow-xs space-y-4">
+      {/* Storage summary */}
+      <div className="bg-[var(--surface-card)] rounded-xl p-5 border border-[var(--border)] space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-[var(--color-primary)]/10 text-[var(--color-primary)] rounded-xl">
-              <Database size={20} />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="font-semibold text-sm text-[var(--color-text)]">
-                  Database Storage Headroom
-                </span>
-                <span
-                  className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium ${
-                    storageUsagePct >= 85
-                      ? "bg-[var(--color-danger)]/10 text-[var(--color-danger)]"
-                      : storageUsagePct >= 70
-                        ? "bg-[var(--color-warning)]/10 text-[var(--color-warning)]"
-                        : "bg-[var(--color-success)]/10 text-[var(--color-success)]"
-                  }`}
-                >
-                  <span
-                    className={`w-1.5 h-1.5 rounded-full ${
-                      storageUsagePct >= 85
-                        ? "bg-[var(--color-danger)]"
-                        : storageUsagePct >= 70
-                          ? "bg-[var(--color-warning)]"
-                          : "bg-[var(--color-success)]"
-                    }`}
-                  />
-                  {storageUsagePct >= 85
-                    ? "Storage Critical"
-                    : storageUsagePct >= 70
-                      ? "Storage Warning"
-                      : "Healthy Headroom"}
-                </span>
-              </div>
-              <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-                Real-time tracking of PostgreSQL & pgvector corpus storage to prevent out-of-memory errors
-              </p>
-            </div>
-          </div>
-
-          <div className="text-right">
-            <span className="text-[11px] text-[var(--color-text-tertiary)] uppercase tracking-wider block">
-              Free Space Available
+          <div>
+            <span className="font-medium text-[14px] text-[var(--text-primary)]">
+              Storage
             </span>
-            <span className="font-semibold text-base text-[var(--color-primary)] font-mono">
-              {storage ? `${storage.free_mb} MB free` : "Calculating..."}
+            <span className="ml-3 text-[12px] text-[var(--text-muted)] font-mono">
+              {storageUsagePct.toFixed(1)}% used
             </span>
           </div>
+          <span className="text-[13px] text-[var(--text-secondary)] font-mono tabular-nums">
+            {storage ? `${storage.used_mb} / ${storage.max_storage_mb} MB` : "Loading..."}
+          </span>
         </div>
 
-        {/* Real-time Storage Progress Bar */}
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between text-xs text-[var(--color-text-secondary)]">
-            <span>
-              {storage
-                ? `${storage.used_mb} MB used of ${storage.max_storage_mb} MB storage quota`
-                : "Loading storage stats..."}
-            </span>
-            <span className="font-mono font-medium">
-              {storageUsagePct.toFixed(1)}%
-            </span>
-          </div>
-
-          <div className="w-full h-3 bg-[var(--color-bg-tertiary)] rounded-full overflow-hidden p-0.5 border border-[var(--color-border)]/60">
-            <div
-              className={`h-full rounded-full transition-all duration-500 ${
-                storageUsagePct >= 85
-                  ? "bg-[var(--color-danger)]"
-                  : storageUsagePct >= 70
-                    ? "bg-[var(--color-warning)]"
-                    : "bg-[var(--color-primary)]"
-              }`}
-              style={{
-                width: `${Math.min(100, Math.max(storage && storage.used_mb > 0 ? 2 : 0, storageUsagePct))}%`,
-              }}
-            />
-          </div>
+        <div className="w-full h-1.5 bg-[var(--surface-raised)] rounded-full overflow-hidden">
+          <div
+            className={`h-full rounded-full transition-[width] duration-500 ${
+              storageUsagePct >= 85
+                ? "bg-[var(--negative)]"
+                : storageUsagePct >= 70
+                  ? "bg-[var(--warning)]"
+                  : "bg-[var(--accent)]"
+            }`}
+            style={{
+              width: `${Math.min(100, Math.max(storage && storage.used_mb > 0 ? 2 : 0, storageUsagePct))}%`,
+            }}
+          />
         </div>
 
-        {/* Secondary Quota Metrics & Safety Badges */}
-        <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-[var(--color-border)]/60 text-xs text-[var(--color-text-secondary)]">
+        <div className="flex flex-wrap items-center justify-between gap-3 text-[12px] text-[var(--text-muted)]">
           <div className="flex items-center gap-4">
-            <span className="flex items-center gap-1.5">
-              <FileText size={13} className="text-[var(--color-text-tertiary)]" />
-              <span>
-                Document Slots:{" "}
-                <strong className="text-[var(--color-text)] font-semibold">
-                  {storage ? storage.document_count : docs.length}
-                </strong>{" "}
-                / {maxDocs} ({docPct}%)
-              </span>
+            <span>
+              Documents: <span className="text-[var(--text-primary)] font-medium tabular-nums">{storage ? storage.document_count : docs.length}</span> / {maxDocs}
             </span>
-
             {storage?.chunk_count != null && (
-              <span className="text-[var(--color-text-tertiary)]">
-                • {storage.chunk_count} indexed chunks
-              </span>
+              <span className="tabular-nums">{storage.chunk_count} chunks indexed</span>
             )}
           </div>
-
-          <div className="flex items-center gap-1.5 bg-[var(--color-bg)] px-2.5 py-1 rounded-lg border border-[var(--color-border)] text-[11px]">
-            <HardDrive size={12} className="text-[var(--color-primary)]" />
-            <span>
-              Safe File Limit:{" "}
-              <strong className="text-[var(--color-text)]">
-                ≤ {storage?.max_upload_size_mb ?? 50} MB
-              </strong>{" "}
-              (prevents dyno OOM)
-            </span>
-          </div>
+          <span className="font-mono tabular-nums">
+            Max upload: {storage?.max_upload_size_mb ?? 50} MB
+          </span>
         </div>
       </div>
 
-      {/* Client-side memory & storage guard banner */}
+      {/* Client error banner */}
       {clientError && (
-        <div className="flex items-center justify-between p-4 bg-[var(--color-warning)]/10 text-[var(--color-warning)] rounded-xl text-sm border border-[var(--color-warning)]/20">
-          <div className="flex items-center gap-2">
-            <AlertTriangle size={18} className="shrink-0" />
+        <div className="flex items-center justify-between px-4 py-3 bg-[var(--surface-card)] border border-[var(--border)] rounded-lg text-[13px]">
+          <div className="flex items-center gap-2 text-[var(--warning)]">
+            <AlertTriangle size={16} strokeWidth={1.5} className="shrink-0" />
             <span>{clientError}</span>
           </div>
           <button
             type="button"
             onClick={() => setClientError(null)}
-            className="p-1 hover:bg-[var(--color-warning)]/20 rounded text-[var(--color-warning)]"
-            title="Dismiss warning"
+            className="p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] rounded transition-colors"
           >
-            <X size={16} />
+            <X size={16} strokeWidth={1.5} />
           </button>
         </div>
       )}
@@ -390,80 +310,75 @@ export default function Documents() {
       {/* Upload zone */}
       <div
         {...getRootProps()}
-        className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors ${
+        className={`border border-dashed rounded-xl px-8 py-10 text-center cursor-pointer transition-colors ${
           isDragActive
-            ? "border-[var(--color-primary)] bg-[var(--color-primary)]/5"
-            : "border-[var(--color-border)] hover:border-[var(--color-border-hover)]"
+            ? "border-[var(--accent)] bg-[var(--surface-raised)]"
+            : "border-[var(--border)] hover:border-[var(--text-muted)]"
         }`}
       >
         <input {...getInputProps()} />
         <Upload
-          size={32}
-          className="mx-auto mb-3 text-[var(--color-text-tertiary)]"
+          size={24}
+          strokeWidth={1.5}
+          className="mx-auto mb-3 text-[var(--text-muted)]"
         />
-        <p className="text-sm text-[var(--color-text-secondary)]">
+        <p className="text-[13px] text-[var(--text-secondary)]">
           Drop PDF, TXT, MD, or HTML files here
         </p>
-        <p className="text-xs text-[var(--color-text-tertiary)] mt-1">
-          Max {storage?.max_upload_size_mb ?? 50} MB per file •{" "}
-          {storage ? `${storage.free_mb} MB free space in database` : "Checking free space..."}
+        <p className="text-[12px] text-[var(--text-muted)] mt-1">
+          Up to {storage?.max_upload_size_mb ?? 50} MB per file
         </p>
         {uploadMut.isPending && (
-          <p className="text-xs text-[var(--color-primary)] mt-2">
+          <p className="text-[12px] text-[var(--accent-fg)] mt-2">
             Uploading...
           </p>
         )}
       </div>
 
-      {/* Upload error banner */}
+      {/* Upload error */}
       {uploadMut.isError && (
-        <div className="flex items-center justify-between p-4 bg-[var(--color-danger)]/10 text-[var(--color-danger)] rounded-xl text-sm border border-[var(--color-danger)]/20">
-          <div className="flex items-center gap-2">
-            <AlertCircle size={18} className="shrink-0" />
+        <div className="flex items-center justify-between px-4 py-3 bg-[var(--surface-card)] border border-[var(--border)] rounded-lg text-[13px]">
+          <div className="flex items-center gap-2 text-[var(--negative)]">
+            <AlertCircle size={16} strokeWidth={1.5} className="shrink-0" />
             <span>{parseApiError(uploadMut.error)}</span>
           </div>
           <button
             type="button"
             onClick={() => uploadMut.reset()}
-            className="p-1 hover:bg-[var(--color-danger)]/20 rounded text-[var(--color-danger)]"
-            title="Dismiss error"
+            className="p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] rounded transition-colors"
           >
-            <X size={16} />
+            <X size={16} strokeWidth={1.5} />
           </button>
         </div>
       )}
 
-      {/* Deletion error banner */}
+      {/* Delete error */}
       {(deleteMut.isError || batchMut.isError) && (
-        <div className="flex items-center justify-between p-4 bg-[var(--color-danger)]/10 text-[var(--color-danger)] rounded-xl text-sm border border-[var(--color-danger)]/20">
-          <div className="flex items-center gap-2">
-            <AlertCircle size={18} className="shrink-0" />
+        <div className="flex items-center justify-between px-4 py-3 bg-[var(--surface-card)] border border-[var(--border)] rounded-lg text-[13px]">
+          <div className="flex items-center gap-2 text-[var(--negative)]">
+            <AlertCircle size={16} strokeWidth={1.5} className="shrink-0" />
             <span>{parseApiError(deleteMut.error || batchMut.error)}</span>
           </div>
           <button
             type="button"
-            onClick={() => {
-              deleteMut.reset();
-              batchMut.reset();
-            }}
-            className="p-1 hover:bg-[var(--color-danger)]/20 rounded text-[var(--color-danger)]"
-            title="Dismiss error"
+            onClick={() => { deleteMut.reset(); batchMut.reset(); }}
+            className="p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] rounded transition-colors"
           >
-            <X size={16} />
+            <X size={16} strokeWidth={1.5} />
           </button>
         </div>
       )}
 
-      {/* Strategy controls */}
-      <div className="bg-[var(--color-bg-secondary)] rounded-xl p-4 border border-[var(--color-border)]">
+      {/* Chunking strategy controls */}
+      <div className="bg-[var(--surface-card)] rounded-xl p-4 border border-[var(--border)]">
         <div className="grid grid-cols-4 gap-4">
           <div>
-            <label className="block text-xs font-medium mb-1">Strategy</label>
+            <label className="block text-[12px] font-medium text-[var(--text-secondary)] mb-1.5">Strategy</label>
             <div className="relative">
               <select
                 value={strategy}
                 onChange={(e) => setStrategy(e.target.value)}
-                className="w-full appearance-none bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm pr-8"
+                className="w-full appearance-none bg-[var(--surface)] border border-[var(--border)] rounded-lg px-3 py-2 text-[13px] pr-8 text-[var(--text-primary)]"
               >
                 {STRATEGIES.map((s) => (
                   <option key={s} value={s}>
@@ -473,13 +388,14 @@ export default function Documents() {
               </select>
               <ChevronDown
                 size={14}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-[var(--color-text-tertiary)]"
+                strokeWidth={1.5}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-[var(--text-muted)]"
               />
             </div>
           </div>
           <div>
-            <label className="block text-xs font-medium mb-1">
-              Chunk Size: {chunkSize}
+            <label className="block text-[12px] font-medium text-[var(--text-secondary)] mb-1.5">
+              Chunk size: <span className="font-mono tabular-nums">{chunkSize}</span>
             </label>
             <input
               type="range"
@@ -488,12 +404,12 @@ export default function Documents() {
               step={50}
               value={chunkSize}
               onChange={(e) => setChunkSize(+e.target.value)}
-              className="w-full accent-[var(--color-primary)]"
+              className="w-full"
             />
           </div>
           <div>
-            <label className="block text-xs font-medium mb-1">
-              Overlap: {overlap}
+            <label className="block text-[12px] font-medium text-[var(--text-secondary)] mb-1.5">
+              Overlap: <span className="font-mono tabular-nums">{overlap}</span>
             </label>
             <input
               type="range"
@@ -502,12 +418,12 @@ export default function Documents() {
               step={10}
               value={overlap}
               onChange={(e) => setOverlap(+e.target.value)}
-              className="w-full accent-[var(--color-primary)]"
+              className="w-full"
             />
           </div>
           <div>
-            <label className="block text-xs font-medium mb-1">
-              Similarity: {threshold.toFixed(2)}
+            <label className="block text-[12px] font-medium text-[var(--text-secondary)] mb-1.5">
+              Similarity: <span className="font-mono tabular-nums">{threshold.toFixed(2)}</span>
             </label>
             <input
               type="range"
@@ -516,7 +432,7 @@ export default function Documents() {
               step={0.05}
               value={threshold}
               onChange={(e) => setThreshold(+e.target.value)}
-              className="w-full accent-[var(--color-primary)]"
+              className="w-full"
               disabled={strategy !== "semantic"}
             />
           </div>
@@ -525,90 +441,89 @@ export default function Documents() {
 
       {/* Bulk actions */}
       {selected.size > 0 && (
-        <div className="flex items-center gap-3 text-sm">
-          <span className="text-[var(--color-text-secondary)]">
+        <div className="flex items-center gap-3 text-[13px]">
+          <span className="text-[var(--text-muted)] tabular-nums">
             {selected.size} selected
           </span>
           <button
             onClick={() =>
               navigate("/qa", { state: { selectedDocIds: [...selected] } })
             }
-            className="px-3 py-1.5 bg-[var(--color-primary)] text-white rounded-lg text-xs font-medium hover:opacity-90 flex items-center gap-1.5 transition-colors"
+            className="px-3 py-1.5 bg-[var(--accent)] text-white rounded-lg text-[12px] font-medium hover:opacity-90 flex items-center gap-1.5 transition-colors"
           >
-            <MessageSquare size={13} />
-            Ask Questions ({selected.size})
+            <MessageSquare size={13} strokeWidth={1.5} />
+            Ask ({selected.size})
           </button>
           <button
             onClick={() => batchMut.mutate([...selected])}
-            className="px-3 py-1.5 bg-[var(--color-danger)] text-white rounded-lg text-xs font-medium hover:opacity-90"
+            className="px-3 py-1.5 bg-[var(--negative)] text-white rounded-lg text-[12px] font-medium hover:opacity-90 transition-colors"
           >
-            Delete Selected
+            Delete selected
           </button>
           <button
             onClick={() => setWipeoutOpen(true)}
-            className="px-3 py-1.5 bg-[var(--color-danger)]/10 text-[var(--color-danger)] rounded-lg text-xs font-medium hover:opacity-90"
+            className="px-3 py-1.5 text-[var(--negative)] rounded-lg text-[12px] font-medium border border-[var(--border)] hover:bg-[var(--surface-raised)] transition-colors"
           >
-            Wipeout All
+            Delete all
           </button>
         </div>
       )}
 
       {/* Document table */}
       {isLoading ? (
-        <p className="text-sm text-[var(--color-text-secondary)]">Loading...</p>
+        <p className="text-[13px] text-[var(--text-muted)]">Loading...</p>
       ) : docs.length === 0 ? (
-        <div className="text-center py-12 text-[var(--color-text-tertiary)]">
-          <FileText size={48} className="mx-auto mb-3 opacity-50" />
-          <p>No documents uploaded yet</p>
+        <div className="text-center py-16 text-[var(--text-muted)]">
+          <FileText size={32} strokeWidth={1.5} className="mx-auto mb-3 opacity-40" />
+          <p className="text-[14px]">No documents uploaded</p>
+          <p className="text-[12px] mt-1">Drop files above or load sample documents</p>
         </div>
       ) : (
-        <div className="border border-[var(--color-border)] rounded-xl overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-[var(--color-bg-secondary)]">
-              <tr className="text-left text-[var(--color-text-secondary)]">
+        <div className="border border-[var(--border)] rounded-xl overflow-hidden">
+          <table className="w-full text-[13px]">
+            <thead className="bg-[var(--surface-card)]">
+              <tr className="text-left text-[var(--text-muted)]">
                 <th className="px-4 py-3 w-8">
                   <input
                     type="checkbox"
                     checked={selected.size === docs.length && docs.length > 0}
                     onChange={toggleAll}
-                    className="accent-[var(--color-primary)]"
                   />
                 </th>
-                <th className="px-4 py-3">Name</th>
-                <th className="px-4 py-3">Type</th>
-                <th className="px-4 py-3">Chunks</th>
-                <th className="px-4 py-3">Uploaded</th>
-                <th className="px-4 py-3 w-20">Actions</th>
+                <th className="px-4 py-3 font-medium">Name</th>
+                <th className="px-4 py-3 font-medium">Type</th>
+                <th className="px-4 py-3 font-medium">Chunks</th>
+                <th className="px-4 py-3 font-medium">Uploaded</th>
+                <th className="px-4 py-3 w-20 font-medium">Actions</th>
               </tr>
             </thead>
             <tbody>
               {docs.map((doc: Document) => (
                 <tr
                   key={doc.id}
-                  className="border-t border-[var(--color-border)] hover:bg-[var(--color-bg-secondary)]/50"
+                  className="border-t border-[var(--border)] hover:bg-[var(--surface-raised)]/50 transition-colors"
                 >
                   <td className="px-4 py-3">
                     <input
                       type="checkbox"
                       checked={selected.has(doc.id)}
                       onChange={() => toggleSelect(doc.id)}
-                      className="accent-[var(--color-primary)]"
                     />
                   </td>
                   <td className="px-4 py-3">
                     <button
                       onClick={() => setInspecting(doc.id)}
-                      className="flex items-center gap-2 hover:text-[var(--color-primary)] transition-colors"
+                      className="flex items-center gap-2 text-[var(--text-primary)] hover:text-[var(--accent-fg)] transition-colors"
                     >
-                      <File size={14} />
+                      <File size={14} strokeWidth={1.5} />
                       {doc.filename}
                     </button>
                   </td>
-                  <td className="px-4 py-3 uppercase text-xs font-mono">
+                  <td className="px-4 py-3 text-[12px] font-mono text-[var(--text-muted)]">
                     {doc.file_type}
                   </td>
-                  <td className="px-4 py-3">{doc.chunk_count}</td>
-                  <td className="px-4 py-3 text-[var(--color-text-secondary)]">
+                  <td className="px-4 py-3 font-mono tabular-nums">{doc.chunk_count}</td>
+                  <td className="px-4 py-3 text-[var(--text-secondary)]">
                     {new Date(doc.created_at).toLocaleDateString()}
                   </td>
                   <td className="px-4 py-3">
@@ -617,17 +532,17 @@ export default function Documents() {
                         onClick={() =>
                           navigate("/qa", { state: { selectedDocIds: [doc.id] } })
                         }
-                        className="p-1.5 hover:bg-[var(--color-primary)]/10 rounded-lg text-[var(--color-text-tertiary)] hover:text-[var(--color-primary)] transition-colors"
-                        title={`Ask questions about ${doc.filename}`}
+                        className="p-1.5 hover:bg-[var(--surface-raised)] rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
+                        title={`Ask about ${doc.filename}`}
                       >
-                        <MessageSquare size={14} />
+                        <MessageSquare size={14} strokeWidth={1.5} />
                       </button>
                       <button
                         onClick={() => deleteMut.mutate(doc.id)}
-                        className="p-1.5 hover:bg-[var(--color-danger)]/10 rounded-lg text-[var(--color-text-tertiary)] hover:text-[var(--color-danger)] transition-colors"
-                        title="Delete document"
+                        className="p-1.5 hover:bg-[var(--surface-raised)] rounded-lg text-[var(--text-muted)] hover:text-[var(--negative)] transition-colors"
+                        title="Delete"
                       >
-                        <Trash2 size={14} />
+                        <Trash2 size={14} strokeWidth={1.5} />
                       </button>
                     </div>
                   </td>
@@ -638,24 +553,17 @@ export default function Documents() {
         </div>
       )}
 
-      {/* Chunk inspector drawer */}
       {inspecting && (
-        <ChunkDrawer
-          docId={inspecting}
-          onClose={() => setInspecting(null)}
-        />
+        <ChunkDrawer docId={inspecting} onClose={() => setInspecting(null)} />
       )}
 
-      {/* Wipeout modal */}
       {wipeoutOpen && (
         <WipeoutModal
           count={docs.filter((d) => d.is_evictable !== false).length}
           protectedCount={docs.filter((d) => d.is_evictable === false).length}
           onConfirm={() => {
             const evictable = docs.filter((d) => d.is_evictable !== false).map((d) => d.id);
-            if (evictable.length > 0) {
-              batchMut.mutate(evictable);
-            }
+            if (evictable.length > 0) batchMut.mutate(evictable);
             setWipeoutOpen(false);
           }}
           onCancel={() => setWipeoutOpen(false)}
@@ -680,44 +588,44 @@ function ChunkDrawer({
   return (
     <div className="fixed inset-0 z-50 flex">
       <div className="flex-1 bg-black/30" onClick={onClose} />
-      <div className="w-[480px] bg-[var(--color-bg)] border-l border-[var(--color-border)] overflow-y-auto">
-        <div className="flex items-center justify-between p-4 border-b border-[var(--color-border)] sticky top-0 bg-[var(--color-bg)] z-10">
-          <h3 className="font-semibold">Chunks ({chunks.length})</h3>
+      <div className="w-[480px] bg-[var(--surface)] border-l border-[var(--border)] overflow-y-auto">
+        <div className="flex items-center justify-between px-5 h-14 border-b border-[var(--border)] sticky top-0 bg-[var(--surface)] z-10">
+          <h3 className="font-medium text-[14px]">
+            Chunks <span className="text-[var(--text-muted)] font-mono tabular-nums">({chunks.length})</span>
+          </h3>
           <button
             onClick={onClose}
-            className="p-1 hover:bg-[var(--color-bg-tertiary)] rounded"
+            className="p-1.5 hover:bg-[var(--surface-raised)] rounded-lg text-[var(--text-muted)] transition-colors"
           >
-            <X size={18} />
+            <X size={16} strokeWidth={1.5} />
           </button>
         </div>
         {isLoading ? (
-          <p className="p-4 text-sm text-[var(--color-text-secondary)]">
-            Loading chunks...
-          </p>
+          <p className="p-5 text-[13px] text-[var(--text-muted)]">Loading chunks...</p>
         ) : isError ? (
-          <div className="p-4 text-sm text-[var(--color-danger)] flex items-center gap-2">
-            <AlertCircle size={16} className="shrink-0" />
-            <span>Failed to load chunks: {parseApiError(error)}</span>
+          <div className="p-5 text-[13px] text-[var(--negative)] flex items-center gap-2">
+            <AlertCircle size={16} strokeWidth={1.5} className="shrink-0" />
+            <span>Failed to load: {parseApiError(error)}</span>
           </div>
         ) : chunks.length === 0 ? (
-          <p className="p-4 text-sm text-[var(--color-text-tertiary)]">
-            No chunks found for this document.
+          <p className="p-5 text-[13px] text-[var(--text-muted)]">
+            No chunks found
           </p>
         ) : (
-          <div className="divide-y divide-[var(--color-border)]">
+          <div className="divide-y divide-[var(--border)]">
             {chunks.map((c: Chunk, i: number) => (
-              <div key={c.chunk_id} className="p-4 space-y-2">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-mono text-[var(--color-text-tertiary)]">
-                    #{i} &middot; {c.token_count} tokens
+              <div key={c.chunk_id} className="px-5 py-4 space-y-2">
+                <div className="flex items-center justify-between text-[12px]">
+                  <span className="font-mono text-[var(--text-muted)] tabular-nums">
+                    #{i} · {c.token_count} tokens
                   </span>
                   {c.section_heading && (
-                    <span className="text-[var(--color-primary)] font-medium">
+                    <span className="text-[var(--accent-fg)] font-medium truncate max-w-[200px]">
                       {c.section_heading}
                     </span>
                   )}
                 </div>
-                <p className="text-sm leading-relaxed whitespace-pre-wrap line-clamp-6">
+                <p className="text-[13px] leading-relaxed whitespace-pre-wrap line-clamp-6 text-[var(--text-secondary)]">
                   {c.content}
                 </p>
               </div>
@@ -742,34 +650,32 @@ function WipeoutModal({
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="bg-[var(--color-bg)] rounded-2xl p-6 w-96 shadow-xl border border-[var(--color-border)]">
+      <div className="bg-[var(--surface-card)] rounded-xl p-6 w-96 border border-[var(--border)]">
         <div className="flex items-center gap-3 mb-4">
-          <div className="p-2 bg-[var(--color-danger)]/10 rounded-full">
-            <AlertTriangle size={20} className="text-[var(--color-danger)]" />
-          </div>
-          <h3 className="font-semibold">Delete All Documents</h3>
+          <AlertTriangle size={20} strokeWidth={1.5} className="text-[var(--negative)]" />
+          <h3 className="font-medium text-[15px]">Delete all documents</h3>
         </div>
-        <p className="text-sm text-[var(--color-text-secondary)] mb-6">
-          This will permanently delete all {count} user-uploaded documents and their chunks.
+        <p className="text-[13px] text-[var(--text-secondary)] mb-6">
+          This permanently deletes {count} uploaded documents and their chunks.
           {protectedCount > 0 && (
-            <span className="block mt-2 text-xs text-[var(--color-primary)] font-medium">
-              Note: {protectedCount} protected golden evaluation document{protectedCount > 1 ? "s" : ""} will be safely preserved.
+            <span className="block mt-2 text-[12px] text-[var(--text-muted)]">
+              {protectedCount} protected evaluation document{protectedCount > 1 ? "s" : ""} will be preserved.
             </span>
           )}
         </p>
         <div className="flex gap-3 justify-end">
           <button
             onClick={onCancel}
-            className="px-4 py-2 text-sm rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-bg-secondary)]"
+            className="px-4 py-2 text-[13px] rounded-lg border border-[var(--border)] hover:bg-[var(--surface-raised)] text-[var(--text-primary)] transition-colors"
           >
             Cancel
           </button>
           <button
             onClick={onConfirm}
             disabled={count === 0}
-            className="px-4 py-2 text-sm rounded-lg bg-[var(--color-danger)] text-white font-medium hover:opacity-90 disabled:opacity-50"
+            className="px-4 py-2 text-[13px] rounded-lg bg-[var(--negative)] text-white font-medium hover:opacity-90 disabled:opacity-50 transition-colors"
           >
-            Delete All
+            Delete all
           </button>
         </div>
       </div>
