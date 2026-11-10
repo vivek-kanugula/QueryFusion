@@ -3,7 +3,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.egg-info/
-dist/
+/dist/
 build/
 .eggs/
 *.egg
@@ -43,7 +43,6 @@ htmlcov/
 
 # Node / Frontend
 node_modules/
-frontend/dist/
 
 # Alembic
 alembic/versions/__pycache__/
