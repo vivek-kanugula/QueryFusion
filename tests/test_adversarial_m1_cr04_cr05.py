@@ -8,11 +8,9 @@ Focuses specifically on:
 from __future__ import annotations
 
 import asyncio
-import concurrent.futures
 import json
 import random
 import threading
-import time
 import uuid
 from unittest.mock import MagicMock, patch
 
@@ -21,13 +19,11 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from hybrid_rag.api.query import router as query_router
-from hybrid_rag.core.jobs import JobRegistry, JobStatus
+from hybrid_rag.core.jobs import JobRegistry
 from hybrid_rag.retrieval.bm25_store import Bm25Store
 from hybrid_rag.retrieval.retriever import (
-    dense_retrieve,
     full_retrieve,
     multi_query_retrieve,
-    sparse_retrieve,
 )
 from hybrid_rag.schemas.generation import (
     CompositeConfidence,
@@ -77,7 +73,7 @@ class TestCR04RetrievalStrategyRouting:
             patch("hybrid_rag.retrieval.retriever.dense_retrieve", return_value=mock_stage) as mock_dense,
             patch("hybrid_rag.retrieval.retriever.sparse_retrieve", side_effect=RuntimeError("sparse_retrieve must NEVER be called!")),
             patch("hybrid_rag.retrieval.retriever.rrf_fuse", side_effect=RuntimeError("rrf_fuse must NEVER be called!")),
-            patch("hybrid_rag.retrieval.retriever.hydrate_candidates") as mock_hydrate,
+            patch("hybrid_rag.retrieval.retriever.hydrate_candidates"),
         ):
             trace = full_retrieve("test query", config, bm25_store=mock_bm25)
 

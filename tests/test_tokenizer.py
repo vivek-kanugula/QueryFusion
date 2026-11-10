@@ -90,6 +90,7 @@ def test_tokenize_technical_preserves_composite():
 
 def test_get_stemmer_thread_local():
     import threading
+
     from hybrid_rag.retrieval.tokenizer import get_stemmer
 
     stemmers = {}

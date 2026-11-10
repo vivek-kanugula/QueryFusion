@@ -290,6 +290,7 @@ export default function QA() {
   const [queryExpansion, setQueryExpansion] = useState<boolean>(
     () => savedSession?.queryExpansion ?? false,
   );
+  const [adaptiveAlpha, setAdaptiveAlpha] = useState(false);
   const [selectedDocIds, setSelectedDocIds] = useState<string[]>(() => {
     if (locationState?.selectedDocIds && locationState.selectedDocIds.length > 0) {
       return locationState.selectedDocIds;
@@ -465,6 +466,7 @@ export default function QA() {
       provider: selectedProvider,
       query_expansion: queryExpansion,
       enable_crag: true,
+      adaptive_alpha: adaptiveAlpha,
     });
   };
 
@@ -790,6 +792,29 @@ export default function QA() {
                     }`}
                   >
                     {queryExpansion ? "on" : "off"}
+                  </span>
+                </button>
+
+                {/* Adaptive alpha toggle */}
+                <button
+                  type="button"
+                  onClick={() => setAdaptiveAlpha((prev) => !prev)}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium rounded-lg border transition-colors cursor-pointer ${
+                    adaptiveAlpha
+                      ? "bg-[var(--accent)] text-white border-[var(--accent)]"
+                      : "bg-[var(--surface)] border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--surface-raised)]"
+                  }`}
+                  title="Auto-tune alpha based on query difficulty classification"
+                >
+                  Auto-α
+                  <span
+                    className={`text-[10px] px-1 rounded font-medium ${
+                      adaptiveAlpha
+                        ? "bg-white/20 text-white"
+                        : "bg-[var(--surface-raised)] text-[var(--text-muted)]"
+                    }`}
+                  >
+                    {adaptiveAlpha ? "on" : "off"}
                   </span>
                 </button>
 

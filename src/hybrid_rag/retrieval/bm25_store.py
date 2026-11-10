@@ -25,6 +25,7 @@ class Bm25Store:
         self._indices: dict[str, bm25s.BM25] = {}
         self._chunk_ids: dict[str, list[str]] = {}
         self._chunk_doc_ids: dict[str, list[str]] = {}
+        self._corpus_texts: dict[str, list[str]] = {}
         self._lock = threading.Lock()
         self._local = threading.local()
 
@@ -55,6 +56,7 @@ class Bm25Store:
                 self._indices.pop(strategy, None)
                 self._chunk_ids.pop(strategy, None)
                 self._chunk_doc_ids.pop(strategy, None)
+                self._corpus_texts.pop(strategy, None)
             return 0
 
         corpus_tokens = self._tokenize(texts)
@@ -63,6 +65,7 @@ class Bm25Store:
                 self._indices.pop(strategy, None)
                 self._chunk_ids.pop(strategy, None)
                 self._chunk_doc_ids.pop(strategy, None)
+                self._corpus_texts.pop(strategy, None)
             logger.warning(
                 "BM25 index skipped (empty vocabulary after tokenization): strategy=%s, docs=%d",
                 strategy,
@@ -83,6 +86,7 @@ class Bm25Store:
                 self._indices.pop(strategy, None)
                 self._chunk_ids.pop(strategy, None)
                 self._chunk_doc_ids.pop(strategy, None)
+                self._corpus_texts.pop(strategy, None)
             return 0
 
         doc_id_list = list(doc_ids) if doc_ids is not None else [""] * len(chunk_ids)
@@ -91,9 +95,66 @@ class Bm25Store:
             self._indices[strategy] = new_index
             self._chunk_ids[strategy] = list(chunk_ids)
             self._chunk_doc_ids[strategy] = doc_id_list
+            self._corpus_texts[strategy] = list(texts)
 
         logger.info("BM25 index rebuilt: strategy=%s, docs=%d", strategy, len(texts))
         return len(texts)
+
+    def add_chunks(
+        self,
+        texts: list[str],
+        chunk_ids: list[str],
+        strategy: str,
+        doc_ids: list[str] | None = None,
+    ) -> int:
+        """Incrementally add chunks without DB round-trip.
+
+        Appends to cached corpus and rebuilds BM25 index (IDF must update).
+        Falls back to rebuild_from_db if no cached corpus exists.
+        """
+        with self._lock:
+            existing_texts = list(self._corpus_texts.get(strategy, []))
+            existing_ids = list(self._chunk_ids.get(strategy, []))
+            existing_doc_ids = list(self._chunk_doc_ids.get(strategy, []))
+
+        if not existing_texts and existing_ids:
+            logger.info("No cached corpus for %s; falling back to rebuild_from_db", strategy)
+            return -1
+
+        all_texts = existing_texts + list(texts)
+        all_ids = existing_ids + list(chunk_ids)
+        all_doc_ids = existing_doc_ids + (list(doc_ids) if doc_ids else [""] * len(chunk_ids))
+        return self.rebuild(all_texts, all_ids, strategy, doc_ids=all_doc_ids)
+
+    def remove_by_doc_id(self, strategy: str, doc_id: str) -> int:
+        """Remove all chunks for a document without DB round-trip.
+
+        Filters cached corpus and rebuilds. Returns -1 if no cache (caller should use rebuild_from_db).
+        """
+        with self._lock:
+            existing_texts = list(self._corpus_texts.get(strategy, []))
+            existing_ids = list(self._chunk_ids.get(strategy, []))
+            existing_doc_ids = list(self._chunk_doc_ids.get(strategy, []))
+
+        if not existing_texts:
+            return -1
+
+        filtered = [
+            (t, cid, did)
+            for t, cid, did in zip(existing_texts, existing_ids, existing_doc_ids)
+            if did != doc_id
+        ]
+
+        if not filtered:
+            with self._lock:
+                self._indices.pop(strategy, None)
+                self._chunk_ids.pop(strategy, None)
+                self._chunk_doc_ids.pop(strategy, None)
+                self._corpus_texts.pop(strategy, None)
+            return 0
+
+        texts, ids, doc_ids_list = zip(*filtered)
+        return self.rebuild(list(texts), list(ids), strategy, doc_ids=list(doc_ids_list))
 
     def rebuild_from_db(self, db, strategy: str) -> int:
         """Restore BM25 index for a strategy from PostgreSQL chunks."""
@@ -165,10 +226,12 @@ class Bm25Store:
                 self._indices.pop(strategy, None)
                 self._chunk_ids.pop(strategy, None)
                 self._chunk_doc_ids.pop(strategy, None)
+                self._corpus_texts.pop(strategy, None)
             else:
                 self._indices.clear()
                 self._chunk_ids.clear()
                 self._chunk_doc_ids.clear()
+                self._corpus_texts.clear()
 
 
 _bm25_store_lock = threading.Lock()

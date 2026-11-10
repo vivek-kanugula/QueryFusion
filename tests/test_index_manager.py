@@ -45,6 +45,7 @@ def test_index_document_writes_pg_and_rebuilds_bm25(mock_embed, mock_get_bm25):
 
     mock_embed.return_value = [np.zeros(384) for _ in range(3)]
     mock_bm25 = MagicMock()
+    mock_bm25.add_chunks.return_value = 3
     mock_get_bm25.return_value = mock_bm25
 
     db = MagicMock()
@@ -58,7 +59,7 @@ def test_index_document_writes_pg_and_rebuilds_bm25(mock_embed, mock_get_bm25):
     db.add_all.assert_called_once()
     db.flush.assert_called_once()
     db.commit.assert_called_once()
-    mock_bm25.rebuild_from_db.assert_called_once_with(db, "fixed")
+    mock_bm25.add_chunks.assert_called_once()
 
 
 def test_delete_document_removes_from_postgres():
@@ -113,6 +114,7 @@ def test_index_document_pgvector_and_bm25_rebuild(mock_embed, mock_get_bm25):
 
     mock_embed.return_value = [np.ones(384) for _ in range(2)]
     mock_bm25 = MagicMock()
+    mock_bm25.add_chunks.return_value = 2
     mock_get_bm25.return_value = mock_bm25
 
     db = MagicMock()
@@ -123,7 +125,7 @@ def test_index_document_pgvector_and_bm25_rebuild(mock_embed, mock_get_bm25):
     assert len(result) == 2
     assert result[0].embedding == [1.0] * 384
     db.commit.assert_called_once()
-    mock_bm25.rebuild_from_db.assert_called_once_with(db, "fixed")
+    mock_bm25.add_chunks.assert_called_once()
 
 
 def test_check_consistency_pgvector_mode():
@@ -164,6 +166,7 @@ def test_index_document_bm25_failure_triggers_rollback(mock_embed, mock_get_bm25
 
     mock_embed.return_value = [np.zeros(384) for _ in range(3)]
     mock_bm25 = MagicMock()
+    mock_bm25.add_chunks.return_value = -1
     mock_bm25.rebuild_from_db.side_effect = [
         RuntimeError("Stemmer internal memory error"),
         0,

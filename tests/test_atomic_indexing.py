@@ -106,6 +106,7 @@ def test_bm25_failure_compensating_rollback(mock_embed, mock_bm25_getter):
     """
     mock_embed.return_value = [np.zeros(384) for _ in range(3)]
     mock_bm25 = MagicMock()
+    mock_bm25.add_chunks.return_value = -1
     mock_bm25.rebuild_from_db.side_effect = [
         RuntimeError("BM25 index lock contention / disk failure"),
         0,
@@ -135,6 +136,7 @@ def test_db_commit_failure_rollback(mock_embed, mock_bm25_getter):
     """
     mock_embed.return_value = [np.zeros(384) for _ in range(4)]
     mock_bm25 = MagicMock()
+    mock_bm25.add_chunks.return_value = 4
     mock_bm25_getter.return_value = mock_bm25
 
     db = MagicMock()

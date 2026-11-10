@@ -7,20 +7,17 @@ Specifically targets:
 
 from __future__ import annotations
 
-import concurrent.futures
 import threading
 import time
+
 import pytest
 
 from hybrid_rag.core.jobs import JobRegistry
-from hybrid_rag.retrieval.bm25_store import Bm25Store, get_bm25_store
+from hybrid_rag.retrieval.bm25_store import Bm25Store
 from hybrid_rag.retrieval.tokenizer import (
     expand_technical_tokens,
     tokenize_technical,
-    WORD_PATTERN,
-    TECH_PATTERN,
 )
-
 
 # =====================================================================
 # CR-03 Adversarial Suite: Empty / Stopword / Edge Inputs & Concurrency

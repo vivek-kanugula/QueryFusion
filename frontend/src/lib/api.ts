@@ -303,6 +303,7 @@ export interface StreamQueryOptions {
   provider?: string;
   query_expansion?: boolean;
   enable_crag?: boolean;
+  adaptive_alpha?: boolean;
 }
 
 export function streamQuery(
@@ -459,4 +460,42 @@ export interface EvalResults {
 
 export function fetchEvalResults(): Promise<EvalResults> {
   return request("/api/v1/evaluation/results");
+}
+
+export interface ChunkComparisonItem {
+  index: number;
+  token_count: number;
+  char_start: number;
+  char_end: number;
+  section_heading: string | null;
+  preview: string;
+}
+
+export interface ChunkComparisonResult {
+  document_id: string;
+  filename: string;
+  current_strategy: string;
+  text_length: number;
+  strategies: Record<string, ChunkComparisonItem[] | { error: string }>;
+}
+
+export function fetchChunkComparison(
+  documentId: string,
+): Promise<ChunkComparisonResult> {
+  return request(`/api/v1/documents/${documentId}/chunk-comparison`);
+}
+
+export interface QueryClassification {
+  category: string;
+  confidence: number;
+  recommended_alpha: number;
+  reason: string;
+}
+
+export function classifyQuery(question: string): Promise<QueryClassification> {
+  return request("/api/query/classify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question }),
+  });
 }

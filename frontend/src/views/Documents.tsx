@@ -3,6 +3,7 @@ import {
   AlertCircle,
   AlertTriangle,
   ChevronDown,
+  Columns3,
   File,
   FileText,
   MessageSquare,
@@ -16,12 +17,14 @@ import { useNavigate } from "react-router-dom";
 import {
   batchDeleteDocuments,
   deleteDocument,
+  fetchChunkComparison,
   fetchDocumentChunks,
   fetchDocuments,
   fetchStorageStats,
   loadDemoDocuments,
   uploadDocument,
   type Chunk,
+  type ChunkComparisonItem,
   type Document,
 } from "../lib/api";
 
@@ -65,6 +68,7 @@ export default function Documents() {
   const qc = useQueryClient();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [inspecting, setInspecting] = useState<string | null>(null);
+  const [comparing, setComparing] = useState<string | null>(null);
   const [wipeoutOpen, setWipeoutOpen] = useState(false);
 
   const [strategy, setStrategy] = useState<string>("fixed");
@@ -529,6 +533,13 @@ export default function Documents() {
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-1">
                       <button
+                        onClick={() => setComparing(doc.id)}
+                        className="p-1.5 hover:bg-[var(--surface-raised)] rounded-lg text-[var(--text-muted)] hover:text-[var(--accent-fg)] transition-colors"
+                        title="Compare chunking strategies"
+                      >
+                        <Columns3 size={14} strokeWidth={1.5} />
+                      </button>
+                      <button
                         onClick={() =>
                           navigate("/qa", { state: { selectedDocIds: [doc.id] } })
                         }
@@ -555,6 +566,10 @@ export default function Documents() {
 
       {inspecting && (
         <ChunkDrawer docId={inspecting} onClose={() => setInspecting(null)} />
+      )}
+
+      {comparing && (
+        <ChunkComparisonDrawer docId={comparing} onClose={() => setComparing(null)} />
       )}
 
       {wipeoutOpen && (
@@ -632,6 +647,151 @@ function ChunkDrawer({
             ))}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function ChunkComparisonDrawer({
+  docId,
+  onClose,
+}: {
+  docId: string;
+  onClose: () => void;
+}) {
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: ["chunk-comparison", docId],
+    queryFn: () => fetchChunkComparison(docId),
+  });
+
+  const strategyColors: Record<string, string> = {
+    fixed: "var(--accent-fg)",
+    structure: "var(--positive)",
+    semantic: "var(--warning)",
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex">
+      <div className="flex-1 bg-black/30" onClick={onClose} />
+      <div className="w-[640px] bg-[var(--surface)] border-l border-[var(--border)] overflow-y-auto">
+        <div className="flex items-center justify-between px-5 h-14 border-b border-[var(--border)] sticky top-0 bg-[var(--surface)] z-10">
+          <div>
+            <h3 className="font-medium text-[14px] flex items-center gap-2">
+              <Columns3 size={16} strokeWidth={1.5} />
+              Chunk Inspector
+            </h3>
+            {data && (
+              <p className="text-[11px] text-[var(--text-muted)]">
+                {data.filename} · {(data.text_length / 1000).toFixed(1)}k chars
+              </p>
+            )}
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1.5 hover:bg-[var(--surface-raised)] rounded-lg text-[var(--text-muted)] transition-colors"
+          >
+            <X size={16} strokeWidth={1.5} />
+          </button>
+        </div>
+
+        {isLoading ? (
+          <p className="p-5 text-[13px] text-[var(--text-muted)]">Analyzing chunking strategies...</p>
+        ) : isError ? (
+          <div className="p-5 text-[13px] text-[var(--negative)] flex items-center gap-2">
+            <AlertCircle size={16} strokeWidth={1.5} className="shrink-0" />
+            <span>Failed: {parseApiError(error)}</span>
+          </div>
+        ) : data ? (
+          <div className="p-5 space-y-6">
+            {/* Summary cards */}
+            <div className="grid grid-cols-2 gap-3">
+              {Object.entries(data.strategies).map(([name, chunks]) => {
+                const items = Array.isArray(chunks) ? chunks : [];
+                const totalTokens = items.reduce((s: number, c: ChunkComparisonItem) => s + c.token_count, 0);
+                const avgTokens = items.length ? Math.round(totalTokens / items.length) : 0;
+                const isCurrent = name === data.current_strategy;
+                return (
+                  <div
+                    key={name}
+                    className={`rounded-lg border p-4 ${isCurrent ? "border-[var(--accent-fg)] bg-[var(--accent-fg)]/5" : "border-[var(--border)] bg-[var(--surface-card)]"}`}
+                  >
+                    <div className="flex items-center gap-2 mb-2">
+                      <span
+                        className="w-2 h-2 rounded-full"
+                        style={{ backgroundColor: strategyColors[name] || "var(--text-muted)" }}
+                      />
+                      <span className="text-[13px] font-medium capitalize">
+                        {STRATEGY_LABELS[name] || name}
+                      </span>
+                      {isCurrent && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--accent-fg)] text-white font-medium">
+                          active
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex gap-4 text-[12px] text-[var(--text-secondary)]">
+                      <span>{items.length} chunks</span>
+                      <span>{avgTokens} avg tokens</span>
+                      <span>{totalTokens} total</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Token distribution visualization */}
+            {Object.entries(data.strategies).map(([name, chunks]) => {
+              if (!Array.isArray(chunks)) return null;
+              const maxTokens = Math.max(...chunks.map((c: ChunkComparisonItem) => c.token_count), 1);
+              return (
+                <div key={name}>
+                  <h4 className="text-[13px] font-medium mb-2 capitalize flex items-center gap-2">
+                    <span
+                      className="w-2 h-2 rounded-full"
+                      style={{ backgroundColor: strategyColors[name] || "var(--text-muted)" }}
+                    />
+                    {STRATEGY_LABELS[name] || name}
+                    <span className="text-[var(--text-muted)] font-normal">
+                      ({chunks.length} chunks)
+                    </span>
+                  </h4>
+                  <div className="space-y-1">
+                    {chunks.map((c: ChunkComparisonItem) => (
+                      <div key={c.index} className="group">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-mono text-[var(--text-muted)] w-6 text-right shrink-0">
+                            {c.index}
+                          </span>
+                          <div className="flex-1 h-5 bg-[var(--surface-raised)] rounded overflow-hidden">
+                            <div
+                              className="h-full rounded transition-all"
+                              style={{
+                                width: `${(c.token_count / maxTokens) * 100}%`,
+                                backgroundColor: strategyColors[name] || "var(--text-muted)",
+                                opacity: 0.7,
+                              }}
+                            />
+                          </div>
+                          <span className="text-[10px] font-mono text-[var(--text-muted)] w-10 text-right shrink-0">
+                            {c.token_count}
+                          </span>
+                        </div>
+                        {c.section_heading && (
+                          <span className="ml-8 text-[10px] text-[var(--accent-fg)]">
+                            {c.section_heading}
+                          </span>
+                        )}
+                        <p className="ml-8 text-[11px] text-[var(--text-muted)] line-clamp-1 group-hover:line-clamp-3 transition-all">
+                          {c.preview}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
       </div>
     </div>
   );

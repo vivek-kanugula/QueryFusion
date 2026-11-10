@@ -59,7 +59,12 @@ def index_document(
 
         from hybrid_rag.retrieval.bm25_store import get_bm25_store
 
-        get_bm25_store().rebuild_from_db(db, strategy)
+        store = get_bm25_store()
+        chunk_ids = [str(c.id) for c in db_chunks]
+        doc_id_strs = [str(document.id)] * len(db_chunks)
+        result = store.add_chunks(texts, chunk_ids, strategy, doc_ids=doc_id_strs)
+        if result == -1:
+            store.rebuild_from_db(db, strategy)
 
         db.commit()
 
@@ -130,7 +135,10 @@ def delete_document(
     try:
         from hybrid_rag.retrieval.bm25_store import get_bm25_store
 
-        get_bm25_store().rebuild_from_db(db, strategy)
+        store = get_bm25_store()
+        result = store.remove_by_doc_id(strategy, str(document_id))
+        if result == -1:
+            store.rebuild_from_db(db, strategy)
     except Exception:
         logger.warning(
             "BM25 index rebuild failed after deleting document %s",

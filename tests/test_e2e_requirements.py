@@ -34,50 +34,41 @@ from __future__ import annotations
 
 import io
 import json
-import math
+import sqlite3
 import subprocess
-import sys
-import threading
-import time
 import uuid
 from pathlib import Path
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
-from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from hybrid_rag.api.query import QueryRequest, router as query_router
+import hybrid_rag.app as app_module
+from hybrid_rag.api.query import QueryRequest
+from hybrid_rag.api.query import router as query_router
 from hybrid_rag.app import create_app
-from hybrid_rag.core.jobs import Job, JobRegistry, JobStatus
+from hybrid_rag.core.jobs import JobRegistry
 from hybrid_rag.db.engine import get_db
-from hybrid_rag.eval.citation_metrics import CitationScores, compute_citation_metrics
-from hybrid_rag.eval.metrics import ndcg_at_k, precision_at_k, recall_at_k
+from hybrid_rag.eval.citation_metrics import compute_citation_metrics
+from hybrid_rag.eval.metrics import ndcg_at_k
 from hybrid_rag.eval.runner import ExperimentResult, QuestionResult, compare_experiments
 from hybrid_rag.generation.cache import LLMCache, TokenBucketRateLimiter, cache_key
 from hybrid_rag.generation.generator import (
-    GENERATION_SYSTEM_INSTRUCTION,
     _parse_response,
     generate_answer,
 )
 from hybrid_rag.generation.llm_client import _call_groq, _call_ollama
 from hybrid_rag.generation.verifier import (
-    VERIFICATION_SYSTEM_INSTRUCTION,
-    _parse_verification,
     verify_citations,
 )
-from hybrid_rag.models.document import Document, DocumentChunk
-from hybrid_rag.retrieval.bm25_store import Bm25Store, get_bm25_store
+from hybrid_rag.models.document import DocumentChunk
+from hybrid_rag.retrieval.bm25_store import Bm25Store
 from hybrid_rag.retrieval.retriever import (
-    dense_retrieve,
     full_retrieve,
-    hybrid_retrieve,
-    sparse_retrieve,
 )
-from hybrid_rag.retrieval.tokenizer import expand_technical_tokens, tokenize_technical
+from hybrid_rag.retrieval.tokenizer import tokenize_technical
 from hybrid_rag.schemas.generation import (
     Citation,
     ClaimVerification,
@@ -85,8 +76,7 @@ from hybrid_rag.schemas.generation import (
     VerificationResult,
     VerificationVerdict,
 )
-from hybrid_rag.schemas.pipeline import CandidateResult, PipelineConfig, QueryTrace, StageTrace
-
+from hybrid_rag.schemas.pipeline import CandidateResult, PipelineConfig, QueryTrace
 
 # ==============================================================================
 # Helper Fixtures & Utilities
@@ -101,10 +91,6 @@ def mock_db_session():
     session.query.return_value.count.return_value = 0
     return session
 
-
-import sqlite3
-
-import hybrid_rag.app as app_module
 
 @pytest.fixture()
 def in_memory_cache(tmp_path: Path):
@@ -198,7 +184,7 @@ class TestTier1FeatureCoverage:
                     rate_limiter=mock_limiter,
                     model="mock-model",
                 )
-            except Exception as exc:
+            except Exception:
                 # If an explicit rate limit exception is raised, that's valid
                 pass
             # Downstream dispatch MUST NOT be called if rate limiter denied access
@@ -271,14 +257,14 @@ class TestTier1FeatureCoverage:
 
         # Create 3 jobs
         j1 = registry.create_job("ingest")
-        j2 = registry.create_job("ingest")
-        j3 = registry.create_job("ingest")
+        registry.create_job("ingest")
+        registry.create_job("ingest")
 
         # Complete job 1
         registry.complete_job(j1.job_id, {"status": "ok"})
 
         # Create 4th job; should trigger eviction of completed job 1
-        j4 = registry.create_job("ingest")
+        registry.create_job("ingest")
 
         assert registry.count() <= 3, f"CR-05 Violation: JobRegistry exceeded capacity: {registry.count()} > 3"
         assert registry.get_job(j1.job_id) is None, "CR-05 Violation: Completed job j1 was not evicted"

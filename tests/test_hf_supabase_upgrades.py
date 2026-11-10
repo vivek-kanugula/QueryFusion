@@ -2,15 +2,12 @@
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-from sqlalchemy import create_engine
-
 from hybrid_rag.db.engine import connect_args
 from hybrid_rag.generation.verifier import verify_citations
 from hybrid_rag.retrieval.retriever import full_retrieve
 from hybrid_rag.schemas.generation import Citation, GroundedAnswer
 from hybrid_rag.schemas.pipeline import CandidateResult, PipelineConfig
-from hybrid_rag.settings import Settings, settings
+from hybrid_rag.settings import Settings
 
 
 def test_upgraded_settings_defaults():
@@ -75,6 +72,7 @@ def test_full_retrieve_with_expand_queries():
 
 def test_cr04_thread_pool_session_isolation():
     from sqlalchemy.orm import Session
+
     from hybrid_rag.retrieval.retriever import hybrid_retrieve
 
     # If a real Session (or custom object) is passed, worker_db passed to dense_retrieve must be None
@@ -105,7 +103,6 @@ def test_cors_origins_hf_space_defaults(monkeypatch):
 
 def test_expansion_uses_cache():
     from hybrid_rag.retrieval.expansion import expand_query
-    from hybrid_rag.generation.cache import LLMCache
 
     mock_cache = MagicMock()
     mock_cache.get.return_value = '{"queries": ["cached query 1"], "hypothetical_passage": "cached passage"}'
