@@ -27,11 +27,24 @@ class Settings(BaseSettings):
     @field_validator("database_url", "database_url_direct", mode="before")
     @classmethod
     def normalize_postgres_url(cls, v: str | None) -> str | None:
-        if v:
-            if v.startswith("postgres://"):
-                return "postgresql+psycopg://" + v[len("postgres://") :]
-            if v.startswith("postgresql://"):
-                return "postgresql+psycopg://" + v[len("postgresql://") :]
+        if not v:
+            return v
+        # Normalize driver prefix
+        if v.startswith("postgres://"):
+            v = "postgresql+psycopg://" + v[len("postgres://") :]
+        elif v.startswith("postgresql://"):
+            v = "postgresql+psycopg://" + v[len("postgresql://") :]
+
+        # Robustly encode password if it contains '@' or special characters
+        if "://" in v:
+            import urllib.parse
+            scheme, remainder = v.split("://", 1)
+            if "@" in remainder:
+                userinfo, host_path = remainder.rsplit("@", 1)
+                if ":" in userinfo:
+                    user, pw = userinfo.split(":", 1)
+                    pw = urllib.parse.quote_plus(urllib.parse.unquote_plus(pw))
+                    return f"{scheme}://{user}:{pw}@{host_path}"
         return v
 
     # Storage (S3-compatible)
