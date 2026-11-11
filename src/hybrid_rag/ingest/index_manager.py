@@ -171,6 +171,14 @@ def process_document_background(
             doc.error_message = None
             db.commit()
 
+            try:
+                from hybrid_rag.storage.s3 import is_storage_configured, upload_file
+
+                if is_storage_configured():
+                    upload_file(f"documents/{doc.id}/{parsed.filename}", raw_data)
+            except Exception as exc:
+                logger.warning("Object storage upload failed in background: %s", exc)
+
             if job_id:
                 job_registry.complete_job(
                     job_id,
@@ -183,10 +191,14 @@ def process_document_background(
                         "status": "ready",
                     },
                 )
-            logger.info("Background indexing completed for document %s (%d chunks)", doc.id, len(db_chunks))
+            logger.info(
+                "Background indexing completed for document %s (%d chunks)", doc.id, len(db_chunks)
+            )
 
         except Exception as exc:
-            logger.error("Background indexing failed for document %s: %s", document_id, exc, exc_info=True)
+            logger.error(
+                "Background indexing failed for document %s: %s", document_id, exc, exc_info=True
+            )
             try:
                 doc.status = "failed"
                 doc.error_message = str(exc)
@@ -206,10 +218,18 @@ def delete_document(
     """Delete document from Postgres (cascading to chunks/vectors) and rebuild BM25."""
     doc = db.get(Document, document_id)
     if doc:
+        filename = doc.filename
         try:
             db.delete(doc)
             db.commit()
             logger.info("Deleted document %s from Postgres (cascade to chunks)", document_id)
+            try:
+                from hybrid_rag.storage.s3 import delete_file, is_storage_configured
+
+                if is_storage_configured():
+                    delete_file(f"documents/{document_id}/{filename}")
+            except Exception:
+                pass
         except Exception as exc:
             logger.error(
                 "Failed to delete document %s from Postgres; rolling back: %s",

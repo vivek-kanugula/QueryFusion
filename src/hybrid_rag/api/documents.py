@@ -157,6 +157,22 @@ def upload_document(
         db.rollback()
         raise HTTPException(409, "Duplicate file uploaded concurrently")
 
+    try:
+        from hybrid_rag.storage.s3 import is_storage_configured, upload_file
+
+        if is_storage_configured():
+            upload_file(
+                f"documents/{doc.id}/{parsed.filename}",
+                data,
+                content_type=file.content_type or "application/octet-stream",
+            )
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "Object storage upload failed for doc %s: %s", doc.id, exc
+        )
+
     return {
         "document_id": str(doc.id),
         "filename": doc.filename,
@@ -183,9 +199,11 @@ def load_demo_documents(db: Session = Depends(get_db)):
         raw_bytes = content_str.encode("utf-8")
         parsed = parse_file(raw_bytes, filename)
 
-        existing = db.query(Document).filter(
-            (Document.filename == filename) | (Document.file_hash == parsed.content_hash)
-        ).first()
+        existing = (
+            db.query(Document)
+            .filter((Document.filename == filename) | (Document.file_hash == parsed.content_hash))
+            .first()
+        )
 
         if existing:
             already_existing.append(filename)
@@ -208,12 +226,14 @@ def load_demo_documents(db: Session = Depends(get_db)):
             chunks = chunker(parsed.full_text)
 
         db_chunks = index_document(db, doc, chunks, strategy)
-        created_docs.append({
-            "document_id": str(doc.id),
-            "filename": doc.filename,
-            "chunks_created": len(db_chunks),
-            "chunking_strategy": strategy,
-        })
+        created_docs.append(
+            {
+                "document_id": str(doc.id),
+                "filename": doc.filename,
+                "chunks_created": len(db_chunks),
+                "chunking_strategy": strategy,
+            }
+        )
 
     return {
         "status": "success",
@@ -258,6 +278,26 @@ def get_document_status(document_id: uuid.UUID, db: Session = Depends(get_db)):
         "chunk_count": len(doc.chunks) if doc.chunks else 0,
         "chunking_strategy": doc.chunking_strategy,
     }
+
+
+@router.get("/{document_id}/download-url")
+def get_document_download_url(document_id: uuid.UUID, db: Session = Depends(get_db)):
+    """Generate a presigned download URL for the raw document in Neon Object Storage."""
+    doc = db.get(Document, document_id)
+    if not doc:
+        raise HTTPException(404, "Document not found")
+
+    from hybrid_rag.storage.s3 import generate_presigned_url, is_storage_configured
+
+    if not is_storage_configured():
+        raise HTTPException(501, "Object storage is not configured")
+
+    key = f"documents/{doc.id}/{doc.filename}"
+    url = generate_presigned_url(key)
+    if not url:
+        raise HTTPException(404, "Document file not found in object storage")
+
+    return {"document_id": str(doc.id), "filename": doc.filename, "download_url": url}
 
 
 @router.get("/storage")
