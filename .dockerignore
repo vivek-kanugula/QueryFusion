@@ -14,3 +14,4 @@ frontend/dist
 .venv
 .cache
 *.log
+.neon
