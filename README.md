@@ -1,14 +1,3 @@
----
-title: QueryFusion
-emoji: ⚡
-colorFrom: indigo
-colorTo: blue
-sdk: gradio
-app_file: app.py
-python_version: "3.12"
-pinned: false
----
-
 # QueryFusion
 
 [![CI](https://github.com/vivek-kanugula/QueryFusion/actions/workflows/ci.yml/badge.svg)](https://github.com/vivek-kanugula/QueryFusion/actions/workflows/ci.yml)
