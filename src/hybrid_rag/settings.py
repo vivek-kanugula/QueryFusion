@@ -17,12 +17,15 @@ class Settings(BaseSettings):
         description="SQLAlchemy connection string (pooled endpoint for app)",
     )
     database_url_direct: str | None = Field(
-        default=None,
+        default_factory=lambda: os.getenv(
+            "DATABASE_URL_DIRECT", os.getenv("DATABASE_URL_UNPOOLED")
+        ),
         description="Direct (non-pooler) endpoint for Alembic migrations",
     )
     db_pool_pre_ping: bool = True
     db_pool_recycle: int = 240
-    db_pool_size: int = 5
+    db_pool_size: int = 2
+    db_max_overflow: int = 0
 
     @field_validator("database_url", "database_url_direct", mode="before")
     @classmethod
@@ -38,6 +41,7 @@ class Settings(BaseSettings):
         # Robustly encode password if it contains '@' or special characters
         if "://" in v:
             import urllib.parse
+
             scheme, remainder = v.split("://", 1)
             if "@" in remainder:
                 userinfo, host_path = remainder.rsplit("@", 1)
@@ -69,9 +73,7 @@ class Settings(BaseSettings):
 
     # Cache paths
     hf_home: str = Field(
-        default_factory=lambda: os.getenv(
-            "HF_HOME", os.path.expanduser("~/.cache/huggingface")
-        ),
+        default_factory=lambda: os.getenv("HF_HOME", os.path.expanduser("~/.cache/huggingface")),
         alias="HF_HOME",
     )
     fastembed_cache_path: str = Field(
@@ -91,20 +93,24 @@ class Settings(BaseSettings):
     # Security
     cors_origins: list[str] = Field(
         default_factory=lambda: (
-            [
-                origin.strip()
-                for origin in os.getenv("CORS_ORIGINS", os.getenv("FRONTEND_URL", "")).split(",")
-                if origin.strip()
+            (
+                [
+                    origin.strip()
+                    for origin in os.getenv("CORS_ORIGINS", os.getenv("FRONTEND_URL", "")).split(
+                        ","
+                    )
+                    if origin.strip()
+                ]
+                or ["https://huggingface.co"]
+            )
+            if os.getenv("APP_ENV") == "production"
+            else [
+                "http://localhost:5173",
+                "http://127.0.0.1:5173",
+                "http://localhost:3000",
+                "http://localhost:7860",
             ]
-            or ["https://huggingface.co"]
         )
-        if os.getenv("APP_ENV") == "production"
-        else [
-            "http://localhost:5173",
-            "http://127.0.0.1:5173",
-            "http://localhost:3000",
-            "http://localhost:7860",
-        ]
     )
     request_timeout_seconds: int = 120
     max_pdf_pages: int = 500

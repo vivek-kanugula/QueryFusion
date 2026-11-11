@@ -22,6 +22,25 @@ def health_db():
     return JSONResponse(content={"status": status, "database": connected}, status_code=code)
 
 
+@router.get("/health/storage")
+def health_storage():
+    from hybrid_rag.storage.s3 import check_storage_connection, is_storage_configured
+
+    if not is_storage_configured():
+        return JSONResponse(
+            content={
+                "status": "unconfigured",
+                "storage": False,
+                "detail": "S3 credentials not set",
+            },
+            status_code=200,
+        )
+    connected = check_storage_connection()
+    status = "ok" if connected else "unavailable"
+    code = 200 if connected else 503
+    return JSONResponse(content={"status": status, "storage": connected}, status_code=code)
+
+
 @router.get("/ready")
 def readiness():
     checks: dict[str, bool] = {}
