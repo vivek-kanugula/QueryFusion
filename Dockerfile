@@ -33,6 +33,9 @@ ENV HF_HOME=/app/.cache/huggingface
 ENV FASTEMBED_CACHE_PATH=/app/.cache/fastembed
 ENV OMP_NUM_THREADS=1
 ENV ONNXRUNTIME_INTRA_OP_THREAD_NUM=1
+ENV MALLOC_TRIM_THRESHOLD_=131072
+ENV MALLOC_MMAP_THRESHOLD_=131072
+ENV MALLOC_MMAP_MAX_=65536
 
 # Pre-download models to eliminate 60-90s cold start on container initialization
 RUN python -c "\

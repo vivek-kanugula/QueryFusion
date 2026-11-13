@@ -1,7 +1,38 @@
+import json
 import os
+from typing import Annotated
 
-from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, field_validator, model_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+_DEFAULT_DEV_CORS_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",
+    "http://localhost:8080",
+    "http://localhost:7860",
+]
+
+
+def _parse_origins(value: object) -> list[str]:
+    """Parse a comma-separated string, JSON list string, or list of CORS origins."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(origin).strip() for origin in value if str(origin).strip()]
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return []
+        if raw.startswith("["):
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, list):
+                    return [str(origin).strip() for origin in parsed if str(origin).strip()]
+            except json.JSONDecodeError:
+                pass
+        return [origin.strip() for origin in raw.split(",") if origin.strip()]
+    return []
 
 
 class Settings(BaseSettings):
@@ -23,7 +54,7 @@ class Settings(BaseSettings):
         description="Direct (non-pooler) endpoint for Alembic migrations",
     )
     db_pool_pre_ping: bool = True
-    db_pool_recycle: int = 240
+    db_pool_recycle: int = 180
     db_pool_size: int = 2
     db_max_overflow: int = 0
 
@@ -91,31 +122,26 @@ class Settings(BaseSettings):
     uvicorn_port: int = 7860
 
     # Security
-    cors_origins: list[str] = Field(
-        default_factory=lambda: (
-            (
-                [
-                    origin.strip()
-                    for origin in os.getenv("CORS_ORIGINS", os.getenv("FRONTEND_URL", "")).split(
-                        ","
-                    )
-                    if origin.strip()
-                ]
-                or ["https://huggingface.co"]
-            )
-            if os.getenv("APP_ENV") == "production"
-            else [
-                "http://localhost:5173",
-                "http://127.0.0.1:5173",
-                "http://localhost:3000",
-                "http://localhost:7860",
-            ]
-        )
-    )
+    frontend_url: str | None = None
+    cors_origins: Annotated[list[str], NoDecode] = Field(default_factory=list)
     request_timeout_seconds: int = 120
     max_pdf_pages: int = 500
 
-    # Storage quotas (200 MB raw document cap provides safe headroom under Supabase 500 MB limit with pgvector indexes)
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v: object) -> list[str]:
+        return _parse_origins(v)
+
+    @model_validator(mode="after")
+    def resolve_cors_origins(self) -> "Settings":
+        if not self.cors_origins:
+            if self.frontend_url:
+                self.cors_origins = _parse_origins(self.frontend_url)
+            elif not self.is_production:
+                self.cors_origins = list(_DEFAULT_DEV_CORS_ORIGINS)
+        return self
+
+    # Storage quotas (200 MB raw document cap provides safe headroom under Neon 500 MB free-tier limit)
     max_upload_size_mb: int = 50
     max_documents_count: int = 50
     max_storage_mb: int = 200

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
 import threading
 import time
@@ -11,6 +12,30 @@ from hybrid_rag.settings import settings
 
 _reranker = None
 _lock = threading.Lock()
+_inference_lock = threading.Lock()
+_reranker_semaphore: asyncio.Semaphore | None = None
+
+
+def _get_reranker_semaphore() -> asyncio.Semaphore:
+    """Lazy initialize the asyncio semaphore on the active running loop."""
+    global _reranker_semaphore
+    if _reranker_semaphore is None:
+        _reranker_semaphore = asyncio.Semaphore(1)
+    return _reranker_semaphore
+
+
+def _trim_memory() -> None:
+    """Trigger Python garbage collection and trim glibc heap to prevent RSS creep."""
+    import gc
+
+    gc.collect()
+    try:
+        import ctypes
+
+        libc = ctypes.CDLL("libc.so.6")
+        libc.malloc_trim(0)
+    except Exception:
+        pass
 
 
 def get_reranker():
@@ -23,6 +48,7 @@ def get_reranker():
                 _reranker = TextCrossEncoder(
                     model_name=settings.reranker_model,
                     cache_dir=settings.fastembed_cache_path,
+                    threads=1,
                 )
     return _reranker
 
@@ -97,7 +123,9 @@ def rerank_candidates(
     reranker = get_reranker()
     documents = [c.content if c.content else c.chunk_id for c in candidates]
 
-    raw_scores = list(reranker.rerank(query, documents))
+    # Serialize inference across threads to cap memory spikes
+    with _inference_lock:
+        raw_scores = list(reranker.rerank(query, documents))
 
     scored: list[tuple[CandidateResult, float, float]] = []
     for i, raw_score in enumerate(raw_scores):
@@ -146,9 +174,11 @@ async def arerank_candidates(
     top_k: int = 5,
     apply_lost_in_middle: bool = True,
 ) -> StageTrace:
-    """Async wrapper — runs cross-encoder inference off the event loop."""
-    import asyncio
-
-    return await asyncio.to_thread(
-        rerank_candidates, query, candidates, top_k, apply_lost_in_middle
-    )
+    """Async wrapper — serializes cross-encoder inference via semaphore to prevent OOM RAM spikes."""
+    sem = _get_reranker_semaphore()
+    async with sem:
+        result = await asyncio.to_thread(
+            rerank_candidates, query, candidates, top_k, apply_lost_in_middle
+        )
+    _trim_memory()
+    return result

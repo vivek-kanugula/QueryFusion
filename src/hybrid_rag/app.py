@@ -28,6 +28,7 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         response.headers["X-Request-ID"] = request_id
         return response
 
+
 DIST_DIR = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
 
 
@@ -50,7 +51,9 @@ async def lifespan(app: FastAPI):
                     with SessionLocal() as db:
                         store.rebuild_from_db(db, strat)
                 except Exception:
-                    logger.warning("Failed to initialize BM25 for strategy %s", strat, exc_info=True)
+                    logger.warning(
+                        "Failed to initialize BM25 for strategy %s", strat, exc_info=True
+                    )
 
             with ThreadPoolExecutor(max_workers=3) as executor:
                 list(executor.map(_rebuild_strat, strategies))
@@ -98,10 +101,11 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
-        allow_origin_regex=r"https://.*\.hf\.space" if settings.is_production else None,
+        allow_origin_regex=r"https://.*\.pages\.dev",
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        max_age=86400,
     )
 
     app.include_router(health_router)

@@ -21,6 +21,7 @@ def get_embedder() -> TextEmbedding:
                 _embedder = TextEmbedding(
                     model_name=settings.embedding_model,
                     cache_dir=settings.fastembed_cache_path,
+                    threads=1,
                 )
     return _embedder
 

@@ -92,13 +92,41 @@ def test_cr04_thread_pool_session_isolation():
         assert passed_db is None
 
 
-def test_cors_origins_hf_space_defaults(monkeypatch):
+def test_cors_origins_production_defaults(monkeypatch):
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.delenv("CORS_ORIGINS", raising=False)
     monkeypatch.delenv("FRONTEND_URL", raising=False)
 
-    s = Settings()
-    assert "https://huggingface.co" in s.cors_origins
+    s = Settings(_env_file=None)
+    assert s.cors_origins == []
+    assert "https://huggingface.co" not in s.cors_origins
+
+
+def test_cors_origins_parses_comma_separated_and_frontend_url(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("CORS_ORIGINS", "https://app.example.com, https://admin.example.com")
+    monkeypatch.delenv("FRONTEND_URL", raising=False)
+
+    s = Settings(_env_file=None)
+    assert s.cors_origins == ["https://app.example.com", "https://admin.example.com"]
+
+    monkeypatch.delenv("CORS_ORIGINS", raising=False)
+    monkeypatch.setenv("FRONTEND_URL", "https://ui.example.com")
+    s_fallback = Settings(_env_file=None)
+    assert s_fallback.cors_origins == ["https://ui.example.com"]
+
+
+def test_cors_origins_parses_json_array_and_dev_defaults(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("CORS_ORIGINS", '["https://json.example.com"]')
+    monkeypatch.delenv("FRONTEND_URL", raising=False)
+    assert Settings(_env_file=None).cors_origins == ["https://json.example.com"]
+
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.delenv("CORS_ORIGINS", raising=False)
+    s_dev = Settings(_env_file=None)
+    assert "http://localhost:5173" in s_dev.cors_origins
+    assert "http://localhost:8080" in s_dev.cors_origins
 
 
 def test_expansion_uses_cache():
