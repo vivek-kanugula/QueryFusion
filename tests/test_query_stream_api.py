@@ -337,8 +337,9 @@ def test_stream_response_headers(client):
             json={"question": "test"},
         )
 
-    assert resp.headers.get("cache-control") == "no-cache"
+    assert "no-cache" in resp.headers.get("cache-control")
     assert resp.headers.get("x-accel-buffering") == "no"
+    assert resp.headers.get("x-content-type-options") == "nosniff"
 
 
 @patch("hybrid_rag.api.query.trace_store")

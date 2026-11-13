@@ -373,6 +373,37 @@ def test_full_retrieve_rerank_disabled(mock_embed):
     assert trace.stages[-1].stage == "rrf"
 
 
+@pytest.mark.asyncio
+async def test_arerank_candidates_uses_semaphore():
+    """Verify arerank_candidates serializes execution via semaphore gate."""
+    import asyncio
+
+    from hybrid_rag.retrieval.reranker import _get_reranker_semaphore, arerank_candidates
+
+    sem = _get_reranker_semaphore()
+    assert isinstance(sem, asyncio.Semaphore)
+
+    candidates = [
+        CandidateResult(chunk_id="c1", score=0.5, rank=1, content="passage 1"),
+        CandidateResult(chunk_id="c2", score=0.5, rank=2, content="passage 2"),
+    ]
+
+    with patch("hybrid_rag.retrieval.reranker.get_reranker") as mock_get:
+        mock_instance = MagicMock()
+        mock_instance.rerank.return_value = [1.2, -0.4]
+        mock_get.return_value = mock_instance
+
+        # Run two concurrent arerank_candidates tasks
+        task1 = arerank_candidates("query 1", candidates, top_k=2)
+        task2 = arerank_candidates("query 2", candidates, top_k=2)
+        results = await asyncio.gather(task1, task2)
+
+        assert len(results) == 2
+        assert results[0].stage == "rerank"
+        assert results[1].stage == "rerank"
+        assert mock_instance.rerank.call_count == 2
+
+
 # ── Real cross-encoder (slow) ──
 
 

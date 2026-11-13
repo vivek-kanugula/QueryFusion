@@ -37,8 +37,19 @@ Write-Host "--> Server will be available at http://localhost:$Port" -ForegroundC
 Write-Host "--> Press Ctrl+C to stop the container.`n" -ForegroundColor DarkGray
 
 if (Test-Path ".env") {
-    docker run --rm -p "${Port}:8080" --env-file .env $Tag
+    Write-Host "--> Loading .env (overriding container runtime/cache paths for Linux)..." -ForegroundColor DarkGray
+    docker run --rm -p "${Port}:8080" --env-file .env `
+        -e "APP_ENV=production" `
+        -e "PORT=8080" `
+        -e "HF_HOME=/app/.cache/huggingface" `
+        -e "FASTEMBED_CACHE_PATH=/app/.cache/fastembed" `
+        -e "UV_CACHE_DIR=/tmp/.cache/uv" `
+        -e "PIP_CACHE_DIR=/tmp/.cache/pip" `
+        -e "TEMP=/tmp" `
+        -e "TMP=/tmp" `
+        $Tag
 } else {
     Write-Warning "No .env file found. Running without .env environment variables."
-    docker run --rm -p "${Port}:8080" $Tag
+    docker run --rm -p "${Port}:8080" -e "APP_ENV=production" -e "PORT=8080" $Tag
 }
+

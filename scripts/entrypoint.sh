@@ -4,7 +4,10 @@ set -e
 # Run Alembic migrations on startup if DATABASE_URL is configured
 if [ -n "$DATABASE_URL" ]; then
     echo "QueryFusion: Running database migrations..."
-    alembic upgrade head || echo "Notice: Database migrations already up to date or connecting."
+    if ! alembic upgrade head; then
+        echo "ERROR: Database migrations failed. Check DATABASE_URL / DATABASE_URL_DIRECT." >&2
+        exit 1
+    fi
 fi
 
 # If no arguments passed or "web" passed, start uvicorn on $PORT (defaults to 8080)

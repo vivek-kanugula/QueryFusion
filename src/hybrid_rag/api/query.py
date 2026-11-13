@@ -8,7 +8,7 @@ import logging
 import time
 from collections import defaultdict
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -82,7 +82,7 @@ async def classify_query_endpoint(request: QueryRequest):
 
 
 @router.post("/stream")
-async def stream_query(request: QueryRequest):
+async def stream_query(request: QueryRequest, raw_request: Request):
     async def event_stream():
         doc_ids = tuple(request.document_ids) if request.document_ids else None
 
@@ -265,9 +265,7 @@ async def stream_query(request: QueryRequest):
             if gen_response.confidence:
                 yield _sse_event("confidence", (gen_response.confidence.model_dump()))
 
-            stage_durations = {
-                s.stage: round(s.duration_ms, 1) for s in retrieval_trace.stages
-            }
+            stage_durations = {s.stage: round(s.duration_ms, 1) for s in retrieval_trace.stages}
             total_elapsed = round(retrieval_ms + gen_ms, 1)
 
             yield _sse_event(
@@ -283,9 +281,7 @@ async def stream_query(request: QueryRequest):
                     "contextualized_query": (
                         search_query if search_query != request.question else None
                     ),
-                    "expanded_queries": (
-                        expanded_queries if len(expanded_queries) > 1 else None
-                    ),
+                    "expanded_queries": (expanded_queries if len(expanded_queries) > 1 else None),
                     "was_corrected": gen_response.was_corrected,
                     "correction_reason": gen_response.correction_reason,
                 },
@@ -299,6 +295,9 @@ async def stream_query(request: QueryRequest):
         try:
             async with asyncio.timeout(settings.request_timeout_seconds):
                 async for chunk in event_stream():
+                    if await raw_request.is_disconnected():
+                        logger.info("Client disconnected from query stream; aborting pipeline.")
+                        break
                     yield chunk
         except TimeoutError:
             yield _sse_event("error", {"message": "Request timed out"})
@@ -307,8 +306,9 @@ async def stream_query(request: QueryRequest):
         timed_stream(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
+            "Cache-Control": "no-cache, no-store, no-transform",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
+            "X-Content-Type-Options": "nosniff",
         },
     )
