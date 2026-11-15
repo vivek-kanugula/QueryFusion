@@ -89,6 +89,7 @@ class Bm25Store:
                 self._chunk_ids.pop(strategy, None)
                 self._chunk_doc_ids.pop(strategy, None)
                 self._corpus_texts.pop(strategy, None)
+            self._remove_persistent(strategy)
             return 0
 
         doc_id_list = list(doc_ids) if doc_ids is not None else [""] * len(chunk_ids)
@@ -232,6 +233,7 @@ class Bm25Store:
                 self._chunk_ids.pop(strategy, None)
                 self._chunk_doc_ids.pop(strategy, None)
                 self._corpus_texts.pop(strategy, None)
+            self._remove_persistent(strategy)
             return 0
 
         texts, ids, doc_ids_list = zip(*filtered)
