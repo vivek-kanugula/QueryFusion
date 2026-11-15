@@ -28,6 +28,22 @@ logger = logging.getLogger(__name__)
 _retrieval_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="retrieval")
 
 
+def should_skip_reranker(
+    candidates: list[CandidateResult], ratio_threshold: float = 1.35
+) -> tuple[bool, str]:
+    """Check if top candidate is a dominant winner so cross-encoder reranking can be safely skipped."""
+    if len(candidates) < 2:
+        return True, "single_candidate"
+    s1 = candidates[0].score
+    s2 = candidates[1].score
+    if s2 <= 1e-9:
+        return True, "zero_second_score"
+    ratio = s1 / s2
+    if ratio >= ratio_threshold:
+        return True, f"high_confidence_ratio_{ratio:.2f}"
+    return False, f"ambiguous_ratio_{ratio:.2f}"
+
+
 def dense_retrieve(
     query: str,
     config: PipelineConfig,
@@ -375,12 +391,38 @@ def full_retrieve(
     if not config.rerank_enabled or not candidates:
         return trace
 
+    if config.adaptive_rerank:
+        skip, reason = should_skip_reranker(candidates, config.adaptive_ratio_threshold)
+        if skip:
+            top_candidates = candidates[: config.rerank_top_k]
+            if config.lost_in_middle:
+                from hybrid_rag.retrieval.reranker import lost_in_middle_reorder
+
+                top_candidates = lost_in_middle_reorder(top_candidates)
+            trace.add_stage(
+                StageTrace(
+                    stage="rerank",
+                    candidates=top_candidates,
+                    duration_ms=0.0,
+                    metadata={
+                        "adaptive_bypassed": True,
+                        "bypass_reason": reason,
+                        "lost_in_middle": config.lost_in_middle,
+                        "rerank_latency_ms": 0.0,
+                        "candidates_in": len(candidates),
+                        "candidates_out": len(top_candidates),
+                    },
+                )
+            )
+            return trace
+
     try:
         from hybrid_rag.retrieval.reranker import rerank_candidates
 
+        rerank_input = candidates[:10] if len(candidates) > 10 else candidates
         rerank_stage = rerank_candidates(
             query=query,
-            candidates=candidates,
+            candidates=rerank_input,
             top_k=config.rerank_top_k,
             apply_lost_in_middle=config.lost_in_middle,
         )
@@ -527,12 +569,40 @@ def multi_query_retrieve(
     )
 
     if config.rerank_enabled and fused_candidates:
+        if config.adaptive_rerank:
+            skip, reason = should_skip_reranker(
+                fused_candidates, config.adaptive_ratio_threshold
+            )
+            if skip:
+                top_candidates = fused_candidates[: config.rerank_top_k]
+                if config.lost_in_middle:
+                    from hybrid_rag.retrieval.reranker import lost_in_middle_reorder
+
+                    top_candidates = lost_in_middle_reorder(top_candidates)
+                merged_trace.add_stage(
+                    StageTrace(
+                        stage="rerank",
+                        candidates=top_candidates,
+                        duration_ms=0.0,
+                        metadata={
+                            "adaptive_bypassed": True,
+                            "bypass_reason": reason,
+                            "lost_in_middle": config.lost_in_middle,
+                            "rerank_latency_ms": 0.0,
+                        },
+                    )
+                )
+                return merged_trace
+
         try:
             from hybrid_rag.retrieval.reranker import rerank_candidates
 
+            rerank_input = (
+                fused_candidates[:10] if len(fused_candidates) > 10 else fused_candidates
+            )
             rerank_stage = rerank_candidates(
                 query=primary_query,
-                candidates=fused_candidates,
+                candidates=rerank_input,
                 top_k=config.rerank_top_k,
                 apply_lost_in_middle=config.lost_in_middle,
             )

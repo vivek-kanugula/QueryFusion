@@ -27,6 +27,8 @@ class PipelineConfig:
     temperature: float = 0.0
     document_ids: tuple[str, ...] | None = None
     expand_queries: bool = False
+    adaptive_rerank: bool = False
+    adaptive_ratio_threshold: float = 1.35
 
 
 @dataclass

@@ -35,7 +35,19 @@ def index_document(
         document.id = uuid.uuid4()
 
     texts = [c.text for c in chunks]
-    embeddings = embed_texts(texts) if texts else []
+    embed_inputs: list[str] = []
+    for c in chunks:
+        prefix_parts: list[str] = []
+        if getattr(document, "title", None):
+            prefix_parts.append(f"Title: {document.title}")
+        if c.section_heading:
+            prefix_parts.append(f"Section: {c.section_heading}")
+        if prefix_parts:
+            embed_inputs.append(" | ".join(prefix_parts) + "\n" + c.text)
+        else:
+            embed_inputs.append(c.text)
+
+    embeddings = embed_texts(embed_inputs) if embed_inputs else []
     if progress_callback:
         progress_callback(35.0, f"Generated embeddings for {len(chunks)} chunks")
 

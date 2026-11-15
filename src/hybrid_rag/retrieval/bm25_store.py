@@ -57,6 +57,7 @@ class Bm25Store:
                 self._chunk_ids.pop(strategy, None)
                 self._chunk_doc_ids.pop(strategy, None)
                 self._corpus_texts.pop(strategy, None)
+            self._remove_persistent(strategy)
             return 0
 
         corpus_tokens = self._tokenize(texts)
@@ -66,6 +67,7 @@ class Bm25Store:
                 self._chunk_ids.pop(strategy, None)
                 self._chunk_doc_ids.pop(strategy, None)
                 self._corpus_texts.pop(strategy, None)
+            self._remove_persistent(strategy)
             logger.warning(
                 "BM25 index skipped (empty vocabulary after tokenization): strategy=%s, docs=%d",
                 strategy,
@@ -97,8 +99,87 @@ class Bm25Store:
             self._chunk_doc_ids[strategy] = doc_id_list
             self._corpus_texts[strategy] = list(texts)
 
+        self._save_persistent(strategy, new_index, list(chunk_ids), doc_id_list, list(texts))
+
         logger.info("BM25 index rebuilt: strategy=%s, docs=%d", strategy, len(texts))
         return len(texts)
+
+    def _save_persistent(
+        self,
+        strategy: str,
+        index: bm25s.BM25,
+        chunk_ids: list[str],
+        chunk_doc_ids: list[str],
+        texts: list[str],
+    ) -> None:
+        try:
+            import json
+            import os
+            import shutil
+            from pathlib import Path
+
+            local_dir = Path(os.getenv("BM25_CACHE_DIR", "/tmp/bm25_cache")) / strategy
+            local_dir.mkdir(parents=True, exist_ok=True)
+            index.save(str(local_dir))
+            meta_file = local_dir / "meta.json"
+            with open(meta_file, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "chunk_ids": chunk_ids,
+                        "chunk_doc_ids": chunk_doc_ids,
+                        "corpus_texts": texts,
+                    },
+                    f,
+                )
+
+            persistent_dir = (
+                Path(os.getenv("AZURE_PERSISTENT_PATH", "/app/persistent_data/bm25_cache"))
+                / strategy
+            )
+            if persistent_dir.parent.exists():
+                persistent_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(str(local_dir), str(persistent_dir), dirs_exist_ok=True)
+        except Exception as e:
+            logger.debug("BM25 persistence skipped: %s", e)
+
+    def _try_load_persistent(self, strategy: str) -> bool:
+        try:
+            import json
+            import os
+            import shutil
+            from pathlib import Path
+
+            local_dir = Path(os.getenv("BM25_CACHE_DIR", "/tmp/bm25_cache")) / strategy
+            persistent_dir = (
+                Path(os.getenv("AZURE_PERSISTENT_PATH", "/app/persistent_data/bm25_cache"))
+                / strategy
+            )
+
+            if not local_dir.exists() and persistent_dir.exists():
+                try:
+                    shutil.copytree(str(persistent_dir), str(local_dir), dirs_exist_ok=True)
+                except Exception as e:
+                    logger.debug("Copy from persistent share failed: %s", e)
+
+            meta_file = local_dir / "meta.json"
+            if local_dir.exists() and meta_file.exists():
+                loaded_index = bm25s.BM25.load(str(local_dir), mmap=True)
+                with open(meta_file, encoding="utf-8") as f:
+                    meta = json.load(f)
+                with self._lock:
+                    self._indices[strategy] = loaded_index
+                    self._chunk_ids[strategy] = meta.get("chunk_ids", [])
+                    self._chunk_doc_ids[strategy] = meta.get("chunk_doc_ids", [])
+                    self._corpus_texts[strategy] = meta.get("corpus_texts", [])
+                logger.info(
+                    "Loaded BM25 index via mmap: strategy=%s, chunks=%d",
+                    strategy,
+                    len(meta.get("chunk_ids", [])),
+                )
+                return True
+        except Exception as e:
+            logger.debug("BM25 persistent load skipped: %s", e)
+        return False
 
     def add_chunks(
         self,
@@ -187,6 +268,13 @@ class Bm25Store:
             chunk_doc_ids = self._chunk_doc_ids.get(strategy)
 
         if index is None or not chunk_ids:
+            if self._try_load_persistent(strategy):
+                with self._lock:
+                    index = self._indices.get(strategy)
+                    chunk_ids = self._chunk_ids.get(strategy)
+                    chunk_doc_ids = self._chunk_doc_ids.get(strategy)
+
+        if index is None or not chunk_ids:
             return []
 
         doc_filter_set = {str(d) for d in document_ids} if document_ids else None
@@ -218,7 +306,9 @@ class Bm25Store:
 
     def has_index(self, strategy: str) -> bool:
         with self._lock:
-            return strategy in self._indices
+            if strategy in self._indices:
+                return True
+        return self._try_load_persistent(strategy)
 
     def clear(self, strategy: str | None = None) -> None:
         with self._lock:
@@ -232,6 +322,33 @@ class Bm25Store:
                 self._chunk_ids.clear()
                 self._chunk_doc_ids.clear()
                 self._corpus_texts.clear()
+        self._remove_persistent(strategy)
+
+    def _remove_persistent(self, strategy: str | None = None) -> None:
+        try:
+            import os
+            import shutil
+            from pathlib import Path
+
+            local_base = Path(os.getenv("BM25_CACHE_DIR", "/tmp/bm25_cache"))
+            persistent_base = Path(
+                os.getenv("AZURE_PERSISTENT_PATH", "/app/persistent_data/bm25_cache")
+            )
+
+            if strategy:
+                local_dir = local_base / strategy
+                if local_dir.exists():
+                    shutil.rmtree(str(local_dir), ignore_errors=True)
+                pers_dir = persistent_base / strategy
+                if pers_dir.exists():
+                    shutil.rmtree(str(pers_dir), ignore_errors=True)
+            else:
+                if local_base.exists():
+                    shutil.rmtree(str(local_base), ignore_errors=True)
+                if persistent_base.exists():
+                    shutil.rmtree(str(persistent_base), ignore_errors=True)
+        except Exception as e:
+            logger.debug("BM25 remove persistent skipped: %s", e)
 
 
 _bm25_store_lock = threading.Lock()
