@@ -41,7 +41,7 @@ properties:
           - name: DATABASE_URL
             secretRef: database-url
           - name: MAX_STORAGE_MB
-            value: "2000"
+            value: "3500"
           - name: MAX_UPLOAD_SIZE_MB
             value: "100"
           - name: MAX_DOCUMENTS_COUNT
@@ -50,6 +50,8 @@ properties:
             value: "5"
           - name: DB_MAX_OVERFLOW
             value: "2"
+          - name: DB_POOL_TIMEOUT
+            value: "10"
           - name: BM25_USE_BLOB
             value: "true"
           - name: BM25_BLOB_PREFIX

@@ -57,6 +57,7 @@ class Settings(BaseSettings):
     db_pool_recycle: int = 180
     db_pool_size: int = 2
     db_max_overflow: int = 0
+    db_pool_timeout: int = 10
 
     @field_validator("database_url", "database_url_direct", mode="before")
     @classmethod
