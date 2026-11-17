@@ -1,6 +1,6 @@
-import { ArrowDown, ArrowUp, Minus, Search } from "lucide-react";
+import { AlertCircle, ArrowDown, ArrowUp, Minus, Search } from "lucide-react";
 import { useState } from "react";
-import { fetchTrace, type Trace, type TraceStage } from "../lib/api";
+import { ApiError, fetchTrace, type Trace, type TraceStage } from "../lib/api";
 
 function RankIndicator({ prev, curr }: { prev: number; curr: number }) {
   if (prev === -1) {
@@ -112,17 +112,24 @@ export default function Diagnostics() {
   const [trace, setTrace] = useState<Trace | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isProductionRestricted, setIsProductionRestricted] = useState(false);
 
   const handleLoad = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!traceId.trim()) return;
     setLoading(true);
     setError(null);
+    setIsProductionRestricted(false);
     try {
       const t = await fetchTrace(traceId.trim());
       setTrace(t);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load trace");
+      if (err instanceof ApiError && err.status === 403) {
+        setIsProductionRestricted(true);
+        setError(null);
+      } else {
+        setError(err instanceof Error ? err.message : "Failed to load trace");
+      }
       setTrace(null);
     } finally {
       setLoading(false);
@@ -165,7 +172,22 @@ export default function Diagnostics() {
         </button>
       </form>
 
-      {error && (
+      {isProductionRestricted && (
+        <div className="flex items-start gap-3 p-4 rounded-xl border border-[var(--warning)]/30 bg-[var(--warning)]/5">
+          <AlertCircle size={18} strokeWidth={1.5} className="text-[var(--warning)] shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <p className="text-[13px] font-medium text-[var(--text-primary)]">
+              Trace inspection unavailable in production
+            </p>
+            <p className="text-[12px] text-[var(--text-secondary)]">
+              Pipeline traces are disabled on the deployed instance to reduce memory usage.
+              Run the application locally to inspect trace details for each query stage.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {error && !isProductionRestricted && (
         <p className="text-[13px] text-[var(--negative)]">{error}</p>
       )}
 

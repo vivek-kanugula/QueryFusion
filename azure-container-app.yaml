@@ -40,6 +40,20 @@ properties:
             value: "131072"
           - name: DATABASE_URL
             secretRef: database-url
+          - name: MAX_STORAGE_MB
+            value: "2000"
+          - name: MAX_UPLOAD_SIZE_MB
+            value: "100"
+          - name: MAX_DOCUMENTS_COUNT
+            value: "250"
+          - name: DB_POOL_SIZE
+            value: "5"
+          - name: DB_MAX_OVERFLOW
+            value: "2"
+          - name: BM25_USE_BLOB
+            value: "true"
+          - name: BM25_BLOB_PREFIX
+            value: "bm25-indices"
         probes:
           - type: Startup
             httpGet:

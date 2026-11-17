@@ -14,6 +14,7 @@ import bm25s
 import Stemmer as PyStemmer
 
 from hybrid_rag.retrieval.tokenizer import expand_technical_tokens
+from hybrid_rag.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +141,24 @@ class Bm25Store:
             if persistent_dir.parent.exists():
                 persistent_dir.mkdir(parents=True, exist_ok=True)
                 shutil.copytree(str(local_dir), str(persistent_dir), dirs_exist_ok=True)
+
+            if getattr(settings, "bm25_use_blob", False):
+                try:
+                    from hybrid_rag.storage.s3 import is_storage_configured, upload_file
+
+                    if is_storage_configured():
+                        import io
+                        import tarfile
+
+                        tar_buf = io.BytesIO()
+                        with tarfile.open(fileobj=tar_buf, mode="w:gz") as tar:
+                            for item in local_dir.iterdir():
+                                tar.add(str(item), arcname=item.name)
+                        blob_key = f"{settings.bm25_blob_prefix}/{strategy}.tar.gz"
+                        upload_file(blob_key, tar_buf.getvalue(), content_type="application/gzip")
+                        logger.info("Uploaded BM25 index snapshot to blob storage: %s", blob_key)
+                except Exception as blob_err:
+                    logger.debug("BM25 blob snapshot upload skipped: %s", blob_err)
         except Exception as e:
             logger.debug("BM25 persistence skipped: %s", e)
 
@@ -156,11 +175,38 @@ class Bm25Store:
                 / strategy
             )
 
-            if not local_dir.exists() and persistent_dir.exists():
-                try:
-                    shutil.copytree(str(persistent_dir), str(local_dir), dirs_exist_ok=True)
-                except Exception as e:
-                    logger.debug("Copy from persistent share failed: %s", e)
+            meta_file = local_dir / "meta.json"
+            if not (local_dir.exists() and meta_file.exists()):
+                if persistent_dir.exists():
+                    try:
+                        shutil.copytree(str(persistent_dir), str(local_dir), dirs_exist_ok=True)
+                    except Exception as e:
+                        logger.debug("Copy from persistent share failed: %s", e)
+
+                if not (local_dir.exists() and meta_file.exists()) and getattr(settings, "bm25_use_blob", False):
+                    try:
+                        from hybrid_rag.storage.s3 import download_file, is_storage_configured
+
+                        if is_storage_configured():
+                            import io
+                            import tarfile
+
+                            blob_key = f"{settings.bm25_blob_prefix}/{strategy}.tar.gz"
+                            blob_data = download_file(blob_key)
+                            if blob_data:
+                                local_dir.mkdir(parents=True, exist_ok=True)
+                                tar_buf = io.BytesIO(blob_data)
+                                with tarfile.open(fileobj=tar_buf, mode="r:gz") as tar:
+                                    if hasattr(tarfile, "data_filter"):
+                                        tar.extractall(path=str(local_dir), filter="data")
+                                    else:
+                                        tar.extractall(path=str(local_dir))
+                                logger.info(
+                                    "Downloaded BM25 index snapshot from blob storage: %s",
+                                    blob_key,
+                                )
+                    except Exception as blob_err:
+                        logger.debug("BM25 blob snapshot download skipped: %s", blob_err)
 
             meta_file = local_dir / "meta.json"
             if local_dir.exists() and meta_file.exists():
@@ -263,7 +309,13 @@ class Bm25Store:
         top_k: int = 50,
         document_ids: set[str] | list[str] | tuple[str, ...] | None = None,
     ) -> list[tuple[str, float]]:
-        """Search BM25 index. Returns [(chunk_id, score)]."""
+        """Search BM25 index. Returns [(chunk_id, score)].
+
+        When strategy is "auto", searches all available indices and merges results.
+        """
+        if strategy == "auto":
+            return self._search_all_strategies(query, top_k, document_ids)
+
         with self._lock:
             index = self._indices.get(strategy)
             chunk_ids = self._chunk_ids.get(strategy)
@@ -305,6 +357,31 @@ class Bm25Store:
                     break
 
         return output
+
+    def _search_all_strategies(
+        self,
+        query: str,
+        top_k: int,
+        document_ids: set[str] | list[str] | tuple[str, ...] | None = None,
+    ) -> list[tuple[str, float]]:
+        """Search every loaded strategy index and merge by score descending."""
+        with self._lock:
+            strategies = list(self._indices.keys())
+
+        if not strategies:
+            for s in ("fixed", "structure", "semantic"):
+                self._try_load_persistent(s)
+            with self._lock:
+                strategies = list(self._indices.keys())
+
+        all_results: dict[str, float] = {}
+        for strat in strategies:
+            for chunk_id, score in self.search(query, strat, top_k, document_ids):
+                if chunk_id not in all_results or score > all_results[chunk_id]:
+                    all_results[chunk_id] = score
+
+        sorted_results = sorted(all_results.items(), key=lambda x: x[1], reverse=True)
+        return sorted_results[:top_k]
 
     def has_index(self, strategy: str) -> bool:
         with self._lock:
@@ -349,6 +426,19 @@ class Bm25Store:
                     shutil.rmtree(str(local_base), ignore_errors=True)
                 if persistent_base.exists():
                     shutil.rmtree(str(persistent_base), ignore_errors=True)
+
+            if getattr(settings, "bm25_use_blob", False):
+                try:
+                    from hybrid_rag.storage.s3 import delete_file, is_storage_configured
+
+                    if is_storage_configured():
+                        if strategy:
+                            delete_file(f"{settings.bm25_blob_prefix}/{strategy}.tar.gz")
+                        else:
+                            for s in ("fixed", "structure", "semantic"):
+                                delete_file(f"{settings.bm25_blob_prefix}/{s}.tar.gz")
+                except Exception as blob_err:
+                    logger.debug("BM25 blob delete skipped: %s", blob_err)
         except Exception as e:
             logger.debug("BM25 remove persistent skipped: %s", e)
 

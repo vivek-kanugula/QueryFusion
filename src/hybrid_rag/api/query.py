@@ -40,7 +40,7 @@ def _format_error_message(exc: Exception) -> str:
 class QueryRequest(BaseModel):
     question: str = Field(..., min_length=1)
     retrieval_strategy: str = "hybrid_rerank"
-    chunking_strategy: str = "fixed"
+    chunking_strategy: str = "auto"
     alpha: float = Field(default=0.5, ge=0.0, le=1.0)
     rerank_enabled: bool = True
     verify: bool = True

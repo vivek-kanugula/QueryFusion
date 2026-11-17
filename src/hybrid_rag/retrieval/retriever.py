@@ -61,9 +61,10 @@ def dense_retrieve(
     def _query_pgvector(session):
         distance_col = DocumentChunk.embedding.cosine_distance(query_vec.tolist())
         filter_conditions = [
-            Document.chunking_strategy == config.chunking_strategy,
             DocumentChunk.embedding.isnot(None),
         ]
+        if config.chunking_strategy != "auto":
+            filter_conditions.append(Document.chunking_strategy == config.chunking_strategy)
         if config.document_ids:
             doc_uuids = []
             for d in config.document_ids:

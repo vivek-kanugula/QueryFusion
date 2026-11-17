@@ -1,6 +1,9 @@
 import {
-  Database,
+  BarChart3,
+  FlaskConical,
   Loader2,
+  Target,
+  Timer,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -180,15 +183,49 @@ export default function Evaluation() {
             Benchmark results across retrieval strategies
           </p>
         </div>
-        <div className="text-center py-16 text-[var(--text-muted)]">
-          <Database size={32} strokeWidth={1.5} className="mx-auto mb-3 opacity-40" />
-          <p className="text-[14px] text-[var(--text-secondary)]">No results yet</p>
-          <p className="text-[12px] mt-1">
-            Run the evaluation benchmark to populate this dashboard
-          </p>
-          <pre className="mt-4 text-[12px] bg-[var(--surface-card)] border border-[var(--border)] rounded-lg p-3 inline-block text-left text-[var(--text-secondary)] font-mono">
-            python -m hybrid_rag.eval.experiment_4
-          </pre>
+        <div className="py-12 space-y-8">
+          <div className="text-center space-y-2">
+            <FlaskConical size={36} strokeWidth={1.5} className="mx-auto text-[var(--accent-fg)] opacity-60" />
+            <h3 className="text-[16px] font-medium text-[var(--text-primary)]">
+              No evaluation runs yet
+            </h3>
+            <p className="text-[13px] text-[var(--text-secondary)] max-w-md mx-auto">
+              Run the benchmark suite to compare retrieval strategies with empirical metrics across your document corpus.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-2xl mx-auto">
+            <div className="bg-[var(--surface-card)] border border-[var(--border)] rounded-xl p-4 space-y-2">
+              <Target size={18} strokeWidth={1.5} className="text-[var(--accent-fg)]" />
+              <p className="text-[13px] font-medium text-[var(--text-primary)]">Retrieval accuracy</p>
+              <p className="text-[12px] text-[var(--text-muted)]">
+                P@5, Recall@5, MRR, NDCG@5 across Dense, BM25, Hybrid and Hybrid+Reranker
+              </p>
+            </div>
+            <div className="bg-[var(--surface-card)] border border-[var(--border)] rounded-xl p-4 space-y-2">
+              <BarChart3 size={18} strokeWidth={1.5} className="text-[var(--accent-fg)]" />
+              <p className="text-[13px] font-medium text-[var(--text-primary)]">Generation quality</p>
+              <p className="text-[12px] text-[var(--text-muted)]">
+                Faithfulness, citation accuracy and answer relevancy via LLM-as-judge
+              </p>
+            </div>
+            <div className="bg-[var(--surface-card)] border border-[var(--border)] rounded-xl p-4 space-y-2">
+              <Timer size={18} strokeWidth={1.5} className="text-[var(--accent-fg)]" />
+              <p className="text-[13px] font-medium text-[var(--text-primary)]">Latency profiling</p>
+              <p className="text-[12px] text-[var(--text-muted)]">
+                Per-stage p50/p90/p95 latency breakdown and accuracy-latency tradeoff view
+              </p>
+            </div>
+          </div>
+
+          <div className="text-center space-y-3">
+            <p className="text-[12px] text-[var(--text-muted)]">
+              Run locally to generate results:
+            </p>
+            <pre className="text-[12px] bg-[var(--surface-card)] border border-[var(--border)] rounded-lg p-3 inline-block text-left text-[var(--text-secondary)] font-mono">
+              python -m hybrid_rag.eval.experiment_4
+            </pre>
+          </div>
         </div>
       </div>
     );

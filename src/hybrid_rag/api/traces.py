@@ -18,7 +18,11 @@ router = APIRouter(
 @router.get("/{trace_id}")
 def get_trace(trace_id: str):
     if settings.is_production:
-        raise HTTPException(404, "Not Found")
+        raise HTTPException(
+            403,
+            "Trace inspection is disabled in production. "
+            "Run the application locally to inspect pipeline traces.",
+        )
     trace = trace_store.get(trace_id)
     if trace is None:
         raise HTTPException(404, "Trace not found")

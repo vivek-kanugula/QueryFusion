@@ -141,10 +141,14 @@ class Settings(BaseSettings):
                 self.cors_origins = list(_DEFAULT_DEV_CORS_ORIGINS)
         return self
 
-    # Storage quotas (200 MB raw document cap provides safe headroom under Neon 500 MB free-tier limit)
+    # Storage quotas (overridable via environment variables e.g. for Azure PostgreSQL 32 GB)
     max_upload_size_mb: int = 50
     max_documents_count: int = 50
     max_storage_mb: int = 200
+
+    # BM25 snapshot persistence (Azure Blob / S3)
+    bm25_use_blob: bool = False
+    bm25_blob_prefix: str = "bm25-indices"
 
     @property
     def is_production(self) -> bool:

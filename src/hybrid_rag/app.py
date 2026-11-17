@@ -29,7 +29,12 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         return response
 
 
-DIST_DIR = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
+_CANDIDATE_DIST_DIRS = [
+    Path("/app/frontend/dist"),
+    Path(__file__).resolve().parent.parent.parent / "frontend" / "dist",
+    Path.cwd() / "frontend" / "dist",
+]
+DIST_DIR = next((p for p in _CANDIDATE_DIST_DIRS if p.is_dir()), _CANDIDATE_DIST_DIRS[1])
 
 
 @asynccontextmanager
@@ -48,6 +53,9 @@ async def lifespan(app: FastAPI):
 
             def _rebuild_strat(strat: str):
                 try:
+                    if store._try_load_persistent(strat):
+                        logger.info("Loaded BM25 index from persistent snapshot for %s", strat)
+                        return
                     with SessionLocal() as db:
                         store.rebuild_from_db(db, strat)
                 except Exception:
@@ -101,7 +109,7 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
-        allow_origin_regex=r"https://.*\.pages\.dev",
+        allow_origin_regex=r"https://.*(\.pages\.dev|\.azurestaticapps\.net)",
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

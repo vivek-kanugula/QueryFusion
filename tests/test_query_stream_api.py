@@ -50,7 +50,7 @@ def test_sse_event_format():
 def test_query_request_defaults():
     req = QueryRequest(question="What is RAG?")
     assert req.retrieval_strategy == "hybrid_rerank"
-    assert req.chunking_strategy == "fixed"
+    assert req.chunking_strategy == "auto"
     assert req.alpha == 0.5
     assert req.rerank_enabled is True
     assert req.verify is True

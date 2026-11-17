@@ -87,3 +87,63 @@ def test_health_storage_endpoint():
         data = response.json()
         assert data["status"] == "unavailable"
         assert data["storage"] is False
+
+
+def test_bm25_blob_persistence_roundtrip(tmp_path):
+    """Verify BM25 index snapshot serializes and loads from object storage."""
+    from hybrid_rag.retrieval.bm25_store import Bm25Store
+    from hybrid_rag.settings import settings
+
+    uploaded_blobs: dict[str, bytes] = {}
+    deleted_blobs: list[str] = []
+
+    def mock_upload(key: str, data: bytes, content_type: str = "application/octet-stream"):
+        uploaded_blobs[key] = data
+        return key
+
+    def mock_download(key: str):
+        return uploaded_blobs.get(key)
+
+    def mock_delete(key: str):
+        uploaded_blobs.pop(key, None)
+        deleted_blobs.append(key)
+        return True
+
+    store = Bm25Store()
+    texts = [
+        "Hybrid RAG combines dense vector and sparse lexical search.",
+        "PostgreSQL with pgvector provides robust semantic retrieval.",
+    ]
+    chunk_ids = ["c1", "c2"]
+
+    with (
+        patch.object(settings, "bm25_use_blob", True),
+        patch("hybrid_rag.storage.s3.is_storage_configured", return_value=True),
+        patch("hybrid_rag.storage.s3.upload_file", side_effect=mock_upload),
+        patch("hybrid_rag.storage.s3.download_file", side_effect=mock_download),
+        patch.dict("os.environ", {"BM25_CACHE_DIR": str(tmp_path / "cache1")}),
+    ):
+        count = store.rebuild(texts, chunk_ids, "fixed")
+        assert count == 2
+        assert "bm25-indices/fixed.tar.gz" in uploaded_blobs
+
+    # Test loading in a completely fresh store and clean cache dir
+    fresh_store = Bm25Store()
+    with (
+        patch.object(settings, "bm25_use_blob", True),
+        patch("hybrid_rag.storage.s3.is_storage_configured", return_value=True),
+        patch("hybrid_rag.storage.s3.download_file", side_effect=mock_download),
+        patch("hybrid_rag.storage.s3.delete_file", side_effect=mock_delete),
+        patch.dict("os.environ", {"BM25_CACHE_DIR": str(tmp_path / "cache2")}),
+    ):
+        loaded = fresh_store._try_load_persistent("fixed")
+        assert loaded is True
+        assert fresh_store.has_index("fixed")
+        results = fresh_store.search("sparse lexical search", "fixed", top_k=2)
+        assert len(results) >= 1
+        assert results[0][0] == "c1"
+
+        fresh_store.clear("fixed")
+        assert "bm25-indices/fixed.tar.gz" in deleted_blobs
+        assert not fresh_store.has_index("fixed")
+
