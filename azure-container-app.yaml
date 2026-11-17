@@ -23,7 +23,7 @@ properties:
   template:
     containers:
       - name: queryfusion
-        image: docker.io/21241a0595/queryfusion:latest
+        image: ghcr.io/vivek-kanugula/queryfusion:latest
         resources:
           cpu: 2.0
           memory: 4.0Gi
