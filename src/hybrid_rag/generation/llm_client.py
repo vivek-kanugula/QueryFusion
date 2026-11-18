@@ -225,6 +225,7 @@ def _call_groq(
         headers={
             "Authorization": f"Bearer {resolved_api_key}",
             "Content-Type": "application/json",
+            "User-Agent": "QueryFusion/1.0",
         },
         method="POST",
     )

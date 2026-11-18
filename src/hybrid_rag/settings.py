@@ -101,7 +101,7 @@ class Settings(BaseSettings):
 
     # Additional Providers (Groq & Local Ollama)
     groq_api_key: str | None = None
-    groq_fast_model: str = "llama-3.1-8b-instant"
+    groq_fast_model: str = "openai/gpt-oss-20b"
     auxiliary_llm_provider: str = "auto"
     ollama_host: str = "http://localhost:11434"
 
