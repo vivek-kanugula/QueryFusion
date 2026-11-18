@@ -3,7 +3,7 @@
 # Optimization: 60s cooldown drain, concurrency=5, scale-to-zero (minReplicas=0)
 $schema: https://azure.github.io/aca-dotnet/spec.json
 location: eastus
-name: queryfusion-api
+name: queryfusion-prod
 type: Microsoft.App/containerApps
 properties:
   managedEnvironmentId: <MANAGED_ENVIRONMENT_ID>
