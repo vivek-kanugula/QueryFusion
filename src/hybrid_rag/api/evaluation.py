@@ -23,11 +23,7 @@ def _avg(values: list[float | None]) -> float:
 
 @router.get("/results")
 def get_evaluation_results(db: Session = Depends(get_db)):
-    runs = (
-        db.query(EvaluationRun)
-        .order_by(EvaluationRun.created_at.desc())
-        .all()
-    )
+    runs = db.query(EvaluationRun).order_by(EvaluationRun.created_at.desc()).all()
 
     if not runs:
         return {"has_data": False, "strategies": []}
@@ -61,15 +57,30 @@ def get_evaluation_results(db: Session = Depends(get_db)):
             except (json.JSONDecodeError, TypeError):
                 pass
 
-        strategies.append({
-            "id": str(run.id),
-            "experiment_name": run.experiment_name,
-            "retrieval_strategy": run.retrieval_strategy,
-            "chunking_strategy": run.chunking_strategy,
-            "created_at": run.created_at.isoformat(),
-            "n_questions": len(metrics),
-            "metrics": agg,
-            "latency_breakdown": latency,
-        })
+        strategies.append(
+            {
+                "id": str(run.id),
+                "experiment_name": run.experiment_name,
+                "retrieval_strategy": run.retrieval_strategy,
+                "chunking_strategy": run.chunking_strategy,
+                "created_at": run.created_at.isoformat(),
+                "n_questions": len(metrics),
+                "metrics": agg,
+                "latency_breakdown": latency,
+            }
+        )
 
     return {"has_data": bool(strategies), "strategies": strategies}
+
+
+@router.post("/seed")
+def seed_benchmark_results(force: bool = True, db: Session = Depends(get_db)):
+    """Seed baseline benchmark evaluation runs into PostgreSQL."""
+    from hybrid_rag.eval.seed_benchmark import seed_evaluation_benchmark
+
+    runs = seed_evaluation_benchmark(db, force=force)
+    return {
+        "status": "success",
+        "strategies_seeded": len(runs),
+        "strategies": [r.retrieval_strategy for r in runs],
+    }
