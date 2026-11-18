@@ -102,6 +102,15 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.warning("Document retention cleanup on startup failed", exc_info=True)
 
+    try:
+        from hybrid_rag.db.engine import SessionLocal
+        from hybrid_rag.eval.seed_benchmark import seed_evaluation_benchmark
+
+        with SessionLocal() as db:
+            seed_evaluation_benchmark(db, force=False)
+    except Exception:
+        logger.warning("Evaluation benchmark auto-seed on startup failed", exc_info=True)
+
     yield
 
 
