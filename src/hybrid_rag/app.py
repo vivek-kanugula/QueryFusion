@@ -89,7 +89,7 @@ async def lifespan(app: FastAPI):
     from hybrid_rag.generation.cache import LLMCache
 
     try:
-        LLMCache().evict_stale()
+        LLMCache().evict_stale(max_age_seconds=30 * 86400)
     except Exception:
         logger.warning("LLM cache eviction on startup failed", exc_info=True)
 

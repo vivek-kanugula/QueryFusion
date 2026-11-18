@@ -26,6 +26,7 @@ router = APIRouter(
 _request_counts: dict[str, list[float]] = defaultdict(list)
 _RATE_WINDOW = 60.0
 _RATE_LIMIT = 20
+_LAST_CLEANUP = 0.0
 
 
 def _format_error_message(exc: Exception) -> str:
@@ -59,12 +60,21 @@ def _sse_event(event: str, data: dict) -> str:
 
 
 def _check_rate_limit(client_ip: str) -> None:
+    global _LAST_CLEANUP
     now = time.monotonic()
-    entries = _request_counts[client_ip]
-    _request_counts[client_ip] = [t for t in entries if now - t < _RATE_WINDOW]
-    if len(_request_counts[client_ip]) >= _RATE_LIMIT:
+
+    if now - _LAST_CLEANUP > _RATE_WINDOW:
+        stale = [ip for ip, ts in _request_counts.items() if not ts or now - ts[-1] > _RATE_WINDOW]
+        for ip in stale:
+            del _request_counts[ip]
+        _LAST_CLEANUP = now
+
+    active = [t for t in _request_counts[client_ip] if now - t < _RATE_WINDOW]
+    if len(active) >= _RATE_LIMIT:
+        _request_counts[client_ip] = active
         raise HTTPException(429, "Rate limit exceeded. Try again shortly.")
-    _request_counts[client_ip].append(now)
+    active.append(now)
+    _request_counts[client_ip] = active
 
 
 @router.post("/classify")
@@ -83,6 +93,14 @@ async def classify_query_endpoint(request: QueryRequest):
 
 @router.post("/stream")
 async def stream_query(request: QueryRequest, raw_request: Request):
+    forwarded = raw_request.headers.get("x-forwarded-for")
+    client_ip = (
+        forwarded.split(",")[0].strip()
+        if forwarded
+        else (raw_request.client.host if raw_request.client else "unknown")
+    )
+    _check_rate_limit(client_ip)
+
     async def event_stream():
         doc_ids = tuple(request.document_ids) if request.document_ids else None
 

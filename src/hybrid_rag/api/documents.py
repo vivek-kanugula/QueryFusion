@@ -90,6 +90,15 @@ def upload_document(
             422, f"Document limit reached ({settings.max_documents_count}). Delete documents first."
         )
 
+    current_chunks = db.query(DocumentChunk).count()
+    estimated_new = max(1, len(parsed.full_text) // 1000)
+    if current_chunks + estimated_new > settings.max_chunks_count:
+        raise HTTPException(
+            422,
+            f"HNSW index near capacity ({current_chunks}/{settings.max_chunks_count} chunks). "
+            "Delete documents to free space.",
+        )
+
     doc = Document(
         id=uuid.uuid4(),
         filename=parsed.filename,
@@ -323,12 +332,12 @@ def get_storage_stats(db: Session = Depends(get_db)):
     )
     usage_percent = min(100.0, usage_percent)
 
-    hnsw_ceiling = 35000
-    ceiling_percent = round((chunk_count / hnsw_ceiling) * 100, 1) if hnsw_ceiling > 0 else 0.0
+    ceiling = settings.max_chunks_count
+    ceiling_percent = round((chunk_count / ceiling) * 100, 1) if ceiling > 0 else 0.0
     storage_warning = None
-    if chunk_count > hnsw_ceiling * 0.8:
+    if chunk_count > ceiling * 0.8:
         storage_warning = (
-            f"Chunk count ({chunk_count}) approaching HNSW index ceiling (~{hnsw_ceiling}). "
+            f"Chunk count ({chunk_count}) approaching HNSW index ceiling (~{ceiling}). "
             "Consider deleting unused documents."
         )
 
@@ -345,7 +354,7 @@ def get_storage_stats(db: Session = Depends(get_db)):
         "document_count": doc_count,
         "max_documents_count": settings.max_documents_count,
         "chunk_count": chunk_count,
-        "hnsw_ceiling": hnsw_ceiling,
+        "hnsw_ceiling": ceiling,
         "hnsw_usage_percent": ceiling_percent,
         "storage_warning": storage_warning,
     }

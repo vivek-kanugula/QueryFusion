@@ -25,7 +25,7 @@ from hybrid_rag.schemas.pipeline import (
 
 logger = logging.getLogger(__name__)
 
-_retrieval_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="retrieval")
+_retrieval_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="retrieval")
 
 
 def should_skip_reranker(

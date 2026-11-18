@@ -2,6 +2,9 @@ import json
 import os
 from typing import Annotated
 
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("ONNXRUNTIME_INTRA_OP_THREAD_NUM", "1")
+
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
@@ -146,6 +149,7 @@ class Settings(BaseSettings):
     max_upload_size_mb: int = 50
     max_documents_count: int = 50
     max_storage_mb: int = 200
+    max_chunks_count: int = 35000
 
     # BM25 snapshot persistence (Azure Blob / S3)
     bm25_use_blob: bool = False
