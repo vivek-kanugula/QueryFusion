@@ -6,6 +6,7 @@ import {
   Timer,
 } from "lucide-react";
 import { useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
   Bar,
@@ -134,7 +135,9 @@ function buildLatencyBreakdown(strategies: EvalStrategyResult[]): LatencyStage[]
 }
 
 export default function Evaluation() {
-  const [activeTab, setActiveTab] = useState<"metrics" | "tradeoff">("metrics");
+  const [searchParams] = useSearchParams();
+  const initialTab = searchParams.get("tab") === "tradeoff" ? "tradeoff" : "metrics";
+  const [activeTab, setActiveTab] = useState<"metrics" | "tradeoff">(initialTab);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["eval-results"],
@@ -362,6 +365,7 @@ export default function Evaluation() {
                   name={strategyLabel(key)}
                   fill={strategyColor(key)}
                   radius={[4, 4, 0, 0]}
+                  isAnimationActive={false}
                 />
               ))}
             </BarChart>
@@ -437,6 +441,7 @@ export default function Evaluation() {
                   strokeWidth={2}
                   dot={{ r: 5, fill: "var(--accent)" }}
                   activeDot={{ r: 7 }}
+                  isAnimationActive={false}
                 />
               </LineChart>
             </ResponsiveContainer>
@@ -477,9 +482,9 @@ export default function Evaluation() {
                 }}
               />
               <Legend wrapperStyle={{ fontSize: "12px" }} />
-              <Bar dataKey="p50" name="p50" fill="#8b5cf6" radius={[0, 4, 4, 0]} />
-              <Bar dataKey="p90" name="p90" fill="#a78bfa" radius={[0, 4, 4, 0]} />
-              <Bar dataKey="p95" name="p95" fill="#c4b5fd" radius={[0, 4, 4, 0]} />
+              <Bar dataKey="p50" name="p50" fill="#8b5cf6" radius={[0, 4, 4, 0]} isAnimationActive={false} />
+              <Bar dataKey="p90" name="p90" fill="#a78bfa" radius={[0, 4, 4, 0]} isAnimationActive={false} />
+              <Bar dataKey="p95" name="p95" fill="#c4b5fd" radius={[0, 4, 4, 0]} isAnimationActive={false} />
             </BarChart>
           </ResponsiveContainer>
         </div>

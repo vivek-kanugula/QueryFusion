@@ -77,3 +77,15 @@ def test_get_evaluation_results_with_data(client_and_mock_db):
     assert pytest.approx(strat["metrics"]["mrr"], 0.01) == 0.8
     assert strat["latency_breakdown"] == {"p50": 120, "p90": 250}
 
+
+def test_seed_benchmark_results(client_and_mock_db):
+    client, mock_db = client_and_mock_db
+    mock_db.query.return_value.filter.return_value.all.return_value = []
+
+    response = client.post("/api/v1/evaluation/seed")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "success"
+    assert data["strategies_seeded"] == 4
+    assert set(data["strategies"]) == {"bm25", "dense_only", "hybrid", "hybrid_rerank"}
+    assert mock_db.commit.called
