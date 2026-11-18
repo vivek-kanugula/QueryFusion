@@ -25,7 +25,7 @@ router = APIRouter(
 
 _request_counts: dict[str, list[float]] = defaultdict(list)
 _RATE_WINDOW = 60.0
-_RATE_LIMIT = 20
+_DAILY_WINDOW = 86400.0
 _LAST_CLEANUP = 0.0
 
 
@@ -63,18 +63,39 @@ def _check_rate_limit(client_ip: str) -> None:
     global _LAST_CLEANUP
     now = time.monotonic()
 
+    # Periodic cleanup of timestamps older than 24 hours
     if now - _LAST_CLEANUP > _RATE_WINDOW:
-        stale = [ip for ip, ts in _request_counts.items() if not ts or now - ts[-1] > _RATE_WINDOW]
+        stale = []
+        for ip, ts in _request_counts.items():
+            valid_ts = [t for t in ts if now - t < _DAILY_WINDOW]
+            if not valid_ts:
+                stale.append(ip)
+            else:
+                _request_counts[ip] = valid_ts
         for ip in stale:
             del _request_counts[ip]
         _LAST_CLEANUP = now
 
-    active = [t for t in _request_counts[client_ip] if now - t < _RATE_WINDOW]
-    if len(active) >= _RATE_LIMIT:
-        _request_counts[client_ip] = active
+    timestamps = [t for t in _request_counts[client_ip] if now - t < _DAILY_WINDOW]
+
+    # Daily quota check
+    daily_limit = settings.rate_limit_per_day
+    if len(timestamps) >= daily_limit:
+        _request_counts[client_ip] = timestamps
+        raise HTTPException(
+            429,
+            f"Daily query quota exceeded ({daily_limit} queries/day). Please try again tomorrow.",
+        )
+
+    # Minute burst limit check
+    burst_limit = settings.rate_limit_per_minute
+    recent = [t for t in timestamps if now - t < _RATE_WINDOW]
+    if len(recent) >= burst_limit:
+        _request_counts[client_ip] = timestamps
         raise HTTPException(429, "Rate limit exceeded. Try again shortly.")
-    active.append(now)
-    _request_counts[client_ip] = active
+
+    timestamps.append(now)
+    _request_counts[client_ip] = timestamps
 
 
 @router.post("/classify")
@@ -100,6 +121,12 @@ async def stream_query(request: QueryRequest, raw_request: Request):
         else (raw_request.client.host if raw_request.client else "unknown")
     )
     _check_rate_limit(client_ip)
+
+    custom_api_key = (
+        raw_request.headers.get("x-gemini-api-key")
+        or raw_request.headers.get("x-api-key")
+        or raw_request.headers.get("x-groq-api-key")
+    )
 
     async def event_stream():
         doc_ids = tuple(request.document_ids) if request.document_ids else None
@@ -136,7 +163,10 @@ async def stream_query(request: QueryRequest, raw_request: Request):
         yield _sse_event("stage", started_data)
 
         search_query = request.question
-        if request.chat_history:
+        has_history = bool(
+            request.chat_history and any(m.get("content", "").strip() for m in request.chat_history)
+        )
+        if has_history:
             from hybrid_rag.generation.contextualizer import contextualize_query
 
             yield _sse_event("stage", {"name": "contextualize"})
@@ -146,10 +176,11 @@ async def stream_query(request: QueryRequest, raw_request: Request):
                 request.chat_history,
                 model=request.model,
                 provider=request.provider,
+                api_key=custom_api_key,
             )
 
         expanded_queries = [search_query]
-        if request.query_expansion:
+        if request.query_expansion and len(search_query.strip()) > 2:
             from hybrid_rag.retrieval.expansion import expand_query
 
             yield _sse_event("stage", {"name": "expansion"})
@@ -158,6 +189,7 @@ async def stream_query(request: QueryRequest, raw_request: Request):
                 search_query,
                 model=request.model,
                 provider=request.provider,
+                api_key=custom_api_key,
             )
 
         try:
@@ -224,6 +256,7 @@ async def stream_query(request: QueryRequest, raw_request: Request):
                 provider=request.provider,
                 verify=request.verify,
                 temperature=request.temperature,
+                api_key=custom_api_key,
             )
 
             if request.verify:

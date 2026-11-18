@@ -2,9 +2,20 @@
 
 from __future__ import annotations
 
+import time
 import uuid
+from collections import defaultdict
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
 from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -13,6 +24,7 @@ from hybrid_rag.db.engine import get_db
 from hybrid_rag.ingest.chunkers import CHUNKERS, chunk_fixed
 from hybrid_rag.ingest.index_manager import (
     check_consistency,
+    cleanup_expired_documents,
     delete_document,
     index_document,
 )
@@ -25,6 +37,23 @@ router = APIRouter(
     tags=["documents"],
 )
 
+_upload_counts: dict[str, list[float]] = defaultdict(list)
+_UPLOAD_RATE_WINDOW = 60.0
+
+
+def _check_upload_rate_limit(client_ip: str) -> None:
+    now = time.monotonic()
+    active = [t for t in _upload_counts[client_ip] if now - t < _UPLOAD_RATE_WINDOW]
+    if len(active) >= settings.upload_rate_limit_per_minute:
+        _upload_counts[client_ip] = active
+        raise HTTPException(
+            429,
+            f"Upload rate limit exceeded ({settings.upload_rate_limit_per_minute} uploads/min). "
+            "Try again shortly.",
+        )
+    active.append(now)
+    _upload_counts[client_ip] = active
+
 
 @router.post("")
 def upload_document(
@@ -32,8 +61,17 @@ def upload_document(
     chunking_strategy: str = Query(default="fixed"),
     background: bool = Query(default=False),
     background_tasks: BackgroundTasks = None,
+    request: Request = None,
     db: Session = Depends(get_db),
 ):
+    if request is not None:
+        forwarded = request.headers.get("x-forwarded-for")
+        client_ip = (
+            forwarded.split(",")[0].strip()
+            if forwarded
+            else (request.client.host if request.client else "unknown")
+        )
+        _check_upload_rate_limit(client_ip)
     if chunking_strategy not in CHUNKERS:
         valid = list(CHUNKERS.keys())
         raise HTTPException(400, f"Unknown strategy: {chunking_strategy}. Choose: {valid}")
@@ -67,11 +105,19 @@ def upload_document(
         current_storage_bytes = 0
 
     if current_storage_bytes + len(data) > max_storage_bytes:
-        raise HTTPException(
-            422,
-            f"Storage quota exceeded ({settings.max_storage_mb} MB). "
-            "Delete existing documents first.",
-        )
+        cleanup_expired_documents(db, max_age_hours=settings.document_retention_hours)
+        current_storage = db.query(func.coalesce(func.sum(Document.size_bytes), 0)).scalar()
+        try:
+            current_storage_bytes = int(current_storage) if current_storage is not None else 0
+        except (TypeError, ValueError):
+            current_storage_bytes = 0
+
+        if current_storage_bytes + len(data) > max_storage_bytes:
+            raise HTTPException(
+                422,
+                f"Storage quota exceeded ({settings.max_storage_mb} MB). "
+                "Delete existing documents first.",
+            )
 
     try:
         parsed = parse_file(data, file.filename or "unknown")
@@ -588,3 +634,14 @@ def consistency_check(
     from fastapi.responses import JSONResponse
 
     return JSONResponse(content=result, status_code=status_code)
+
+
+@router.post("/cleanup")
+def trigger_document_cleanup(
+    max_age_hours: int | None = None,
+    db: Session = Depends(get_db),
+):
+    """Trigger manual or scheduled cleanup of expired user documents."""
+    hours = max_age_hours or settings.document_retention_hours
+    evicted = cleanup_expired_documents(db, max_age_hours=hours)
+    return {"evicted": evicted, "max_age_hours": hours}

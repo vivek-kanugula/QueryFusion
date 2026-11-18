@@ -311,3 +311,35 @@ def check_consistency(
         "embedded_chunks": embedded_count,
         "consistent": pg_count == embedded_count,
     }
+
+
+def cleanup_expired_documents(db: Session, max_age_hours: int = 24) -> int:
+    """Evict expired user-uploaded documents older than max_age_hours.
+
+    Protected golden benchmark documents (is_evictable=False) are never deleted.
+    Cascades to chunks, embeddings in pgvector, BM25 indices, and S3 objects.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    cutoff = datetime.now(UTC) - timedelta(hours=max_age_hours)
+    expired_docs = (
+        db.query(Document)
+        .filter(Document.is_evictable == True)  # noqa: E712
+        .filter(Document.created_at < cutoff)
+        .all()
+    )
+
+    evicted_count = 0
+    for doc in expired_docs:
+        try:
+            delete_document(db, doc.id, doc.chunking_strategy)
+            evicted_count += 1
+        except Exception as exc:
+            logger.warning("Failed to evict expired document %s: %s", doc.id, exc, exc_info=True)
+
+    if evicted_count > 0:
+        logger.info(
+            "Evicted %d expired documents older than %d hours", evicted_count, max_age_hours
+        )
+
+    return evicted_count

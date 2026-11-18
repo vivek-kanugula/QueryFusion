@@ -95,11 +95,14 @@ class Settings(BaseSettings):
 
     # Gemini
     gemini_api_key: str | None = None
+    gemini_api_keys: Annotated[list[str], NoDecode] = Field(default_factory=list)
     gemini_model: str = "gemini-3.5-flash-lite"
     gemini_verifier_model: str = "gemini-3.5-flash"
 
     # Additional Providers (Groq & Local Ollama)
     groq_api_key: str | None = None
+    groq_fast_model: str = "llama-3.1-8b-instant"
+    auxiliary_llm_provider: str = "auto"
     ollama_host: str = "http://localhost:11434"
 
     # Embedding & reranking
@@ -131,19 +134,35 @@ class Settings(BaseSettings):
     request_timeout_seconds: int = 120
     max_pdf_pages: int = 500
 
-    @field_validator("cors_origins", mode="before")
+    @field_validator("cors_origins", "gemini_api_keys", mode="before")
     @classmethod
-    def parse_cors_origins(cls, v: object) -> list[str]:
+    def parse_string_lists(cls, v: object) -> list[str]:
         return _parse_origins(v)
 
     @model_validator(mode="after")
-    def resolve_cors_origins(self) -> "Settings":
+    def resolve_cors_and_keys(self) -> "Settings":
         if not self.cors_origins:
             if self.frontend_url:
                 self.cors_origins = _parse_origins(self.frontend_url)
             elif not self.is_production:
                 self.cors_origins = list(_DEFAULT_DEV_CORS_ORIGINS)
+
+        if not self.gemini_api_keys:
+            env_keys = os.getenv("GEMINI_API_KEYS")
+            if env_keys:
+                self.gemini_api_keys = _parse_origins(env_keys)
+            elif self.gemini_api_key:
+                self.gemini_api_keys = [self.gemini_api_key]
+        elif self.gemini_api_key and self.gemini_api_key not in self.gemini_api_keys:
+            self.gemini_api_keys.insert(0, self.gemini_api_key)
+
         return self
+
+    # Rate limits & Retention
+    rate_limit_per_minute: int = 20
+    rate_limit_per_day: int = 100
+    upload_rate_limit_per_minute: int = 5
+    document_retention_hours: int = 24
 
     # Storage quotas (overridable via environment variables e.g. for Azure PostgreSQL 32 GB)
     max_upload_size_mb: int = 50

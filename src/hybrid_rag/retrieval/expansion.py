@@ -60,6 +60,7 @@ def expand_query(
     max_expansions: int = 3,
     llm_cache: LLMCache | None = None,
     rate_limiter: TokenBucketRateLimiter | None = None,
+    api_key: str | None = None,
 ) -> list[str]:
     """Generate expanded query variations with caching and rate limiting.
 
@@ -72,9 +73,19 @@ def expand_query(
     cache = llm_cache or _default_cache
     limiter = rate_limiter or _default_limiter
 
-    resolved_model = model or settings.gemini_model
+    resolved_model = model
+    resolved_provider = provider
+    if resolved_provider is None and resolved_model is None:
+        if settings.auxiliary_llm_provider == "groq" and settings.groq_api_key:
+            resolved_provider = "groq"
+            resolved_model = settings.groq_fast_model
+        else:
+            resolved_model = settings.gemini_model
+    else:
+        resolved_model = resolved_model or settings.gemini_model
+
     prompt = EXPANSION_PROMPT_TEMPLATE.format(query=clean_query)
-    cache_tag = f"{provider}:{resolved_model}" if provider else resolved_model
+    cache_tag = f"{resolved_provider}:{resolved_model}" if resolved_provider else resolved_model
     key = cache_key(
         cache_tag,
         prompt,
@@ -101,8 +112,9 @@ def expand_query(
                 prompt=prompt,
                 system_instruction=EXPANSION_SYSTEM_INSTRUCTION,
                 model=resolved_model,
-                provider=provider,
+                provider=resolved_provider,
                 temperature=0.3,
+                api_key=api_key,
             )
         )
         if cache is not None and raw:
@@ -111,5 +123,23 @@ def expand_query(
         data = json.loads(raw)
         return _format_expansions(clean_query, data, max_expansions)
     except Exception:
+        if resolved_provider == "groq":
+            try:
+                raw = retry_with_backoff(
+                    lambda: call_llm(
+                        prompt=prompt,
+                        system_instruction=EXPANSION_SYSTEM_INSTRUCTION,
+                        model=settings.gemini_model,
+                        provider="gemini",
+                        temperature=0.3,
+                        api_key=api_key,
+                    )
+                )
+                if cache is not None and raw:
+                    cache.put(key, raw, model=settings.gemini_model)
+                data = json.loads(raw)
+                return _format_expansions(clean_query, data, max_expansions)
+            except Exception:
+                pass
         # Resilient fallback on any model or parsing error
         return [clean_query]

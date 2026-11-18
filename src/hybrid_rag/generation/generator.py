@@ -135,12 +135,13 @@ def _dispatch_generation(
     prompt: str,
     temperature: float,
     provider: str | None = None,
+    api_key: str | None = None,
 ) -> str:
     from hybrid_rag.generation.llm_client import resolve_provider
 
     resolved_provider, clean_model = resolve_provider(model_name, provider)
     if resolved_provider == "gemini":
-        return _call_gemini(clean_model, prompt, temperature)
+        return _call_gemini(clean_model, prompt, temperature, api_key=api_key)
 
     from hybrid_rag.generation.llm_client import call_llm
 
@@ -150,6 +151,7 @@ def _dispatch_generation(
         model=clean_model,
         provider=resolved_provider,
         temperature=temperature,
+        api_key=api_key,
     )
 
 
@@ -162,6 +164,7 @@ def generate_answer(
     model: str | None = None,
     provider: str | None = None,
     temperature: float = 0.0,
+    api_key: str | None = None,
 ) -> tuple[GroundedAnswer, bool]:
     """Generate grounded answer. Returns (answer, was_cached)."""
     if not candidates:
@@ -188,7 +191,9 @@ def generate_answer(
         return _fallback_answer("Rate limit exceeded."), False
 
     raw_response = retry_with_backoff(
-        lambda: _dispatch_generation(model_name, prompt, temperature, provider=provider),
+        lambda: _dispatch_generation(
+            model_name, prompt, temperature, provider=provider, api_key=api_key
+        ),
     )
 
     answer = _parse_response(raw_response, candidates)
@@ -199,20 +204,21 @@ def generate_answer(
     return answer, False
 
 
-def _call_gemini(model_name: str, prompt: str, temperature: float) -> str:
-    from google import genai
+def _call_gemini(
+    model_name: str,
+    prompt: str,
+    temperature: float,
+    api_key: str | None = None,
+) -> str:
+    from hybrid_rag.generation.llm_client import _call_gemini as _client_call_gemini
 
-    client = genai.Client(api_key=settings.gemini_api_key)
-    response = client.models.generate_content(
-        model=model_name,
-        contents=prompt,
-        config={
-            "response_mime_type": "application/json",
-            "temperature": temperature,
-            "system_instruction": GENERATION_SYSTEM_INSTRUCTION,
-        },
+    return _client_call_gemini(
+        model_name=model_name,
+        prompt=prompt,
+        system_instruction=GENERATION_SYSTEM_INSTRUCTION,
+        temperature=temperature,
+        api_key=api_key,
     )
-    return response.text or ""
 
 
 def _parse_response(raw: str | None, candidates: list[CandidateResult]) -> GroundedAnswer:

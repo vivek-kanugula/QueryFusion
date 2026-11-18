@@ -110,12 +110,13 @@ def _dispatch_verification(
     prompt: str,
     temperature: float,
     provider: str | None = None,
+    api_key: str | None = None,
 ) -> str:
     from hybrid_rag.generation.llm_client import resolve_provider
 
     resolved_provider, clean_model = resolve_provider(model_name, provider)
     if resolved_provider == "gemini":
-        return _call_gemini_verification(clean_model, prompt, temperature)
+        return _call_gemini_verification(clean_model, prompt, temperature, api_key=api_key)
 
     from hybrid_rag.generation.llm_client import call_llm
 
@@ -125,6 +126,7 @@ def _dispatch_verification(
         model=clean_model,
         provider=resolved_provider,
         temperature=temperature,
+        api_key=api_key,
     )
 
 
@@ -136,6 +138,7 @@ def verify_citations(
     model: str | None = None,
     provider: str | None = None,
     temperature: float = 0.0,
+    api_key: str | None = None,
 ) -> VerificationResult:
     if not answer.has_sufficient_context or not answer.citations:
         return VerificationResult(
@@ -169,7 +172,9 @@ def verify_citations(
         return VerificationResult(claims=[], citation_coverage=0.0, all_supported=False)
 
     raw = retry_with_backoff(
-        lambda: _dispatch_verification(model_name, prompt, temperature, provider=provider),
+        lambda: _dispatch_verification(
+            model_name, prompt, temperature, provider=provider, api_key=api_key
+        ),
     )
 
     result = _parse_verification(raw)
@@ -180,20 +185,21 @@ def verify_citations(
     return result
 
 
-def _call_gemini_verification(model_name: str, prompt: str, temperature: float) -> str:
-    from google import genai
+def _call_gemini_verification(
+    model_name: str,
+    prompt: str,
+    temperature: float,
+    api_key: str | None = None,
+) -> str:
+    from hybrid_rag.generation.llm_client import _call_gemini as _client_call_gemini
 
-    client = genai.Client(api_key=settings.gemini_api_key)
-    response = client.models.generate_content(
-        model=model_name,
-        contents=prompt,
-        config={
-            "response_mime_type": "application/json",
-            "temperature": temperature,
-            "system_instruction": VERIFICATION_SYSTEM_INSTRUCTION,
-        },
+    return _client_call_gemini(
+        model_name=model_name,
+        prompt=prompt,
+        system_instruction=VERIFICATION_SYSTEM_INSTRUCTION,
+        temperature=temperature,
+        api_key=api_key,
     )
-    return response.text or ""
 
 
 def _parse_verification(raw: str | None) -> VerificationResult:

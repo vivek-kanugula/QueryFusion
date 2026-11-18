@@ -93,6 +93,15 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.warning("LLM cache eviction on startup failed", exc_info=True)
 
+    try:
+        from hybrid_rag.db.engine import SessionLocal
+        from hybrid_rag.ingest.index_manager import cleanup_expired_documents
+
+        with SessionLocal() as db:
+            cleanup_expired_documents(db, max_age_hours=settings.document_retention_hours)
+    except Exception:
+        logger.warning("Document retention cleanup on startup failed", exc_info=True)
+
     yield
 
 

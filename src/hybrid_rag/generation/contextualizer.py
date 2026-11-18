@@ -62,6 +62,7 @@ def contextualize_query(
     provider: str | None = None,
     llm_cache: LLMCache | None = None,
     rate_limiter: TokenBucketRateLimiter | None = None,
+    api_key: str | None = None,
 ) -> str:
     """Contextualize a follow-up question into a standalone query using conversation history."""
     if not chat_history:
@@ -79,8 +80,18 @@ def contextualize_query(
     cache = llm_cache or _default_cache
     limiter = rate_limiter or _default_limiter
 
-    resolved_model = model or settings.gemini_model
-    cache_tag = f"{provider}:{resolved_model}" if provider else resolved_model
+    resolved_model = model
+    resolved_provider = provider
+    if resolved_provider is None and resolved_model is None:
+        if settings.auxiliary_llm_provider == "groq" and settings.groq_api_key:
+            resolved_provider = "groq"
+            resolved_model = settings.groq_fast_model
+        else:
+            resolved_model = settings.gemini_model
+    else:
+        resolved_model = resolved_model or settings.gemini_model
+
+    cache_tag = f"{resolved_provider}:{resolved_model}" if resolved_provider else resolved_model
     key = cache_key(
         cache_tag,
         prompt,
@@ -109,8 +120,9 @@ def contextualize_query(
                 prompt=prompt,
                 system_instruction=CONTEXTUALIZE_SYSTEM_INSTRUCTION,
                 model=resolved_model,
-                provider=provider,
+                provider=resolved_provider,
                 temperature=0.0,
+                api_key=api_key,
             )
         )
         if cache is not None and raw:
@@ -121,6 +133,26 @@ def contextualize_query(
         if standalone:
             return standalone
     except Exception:
+        if resolved_provider == "groq":
+            try:
+                raw = retry_with_backoff(
+                    lambda: call_llm(
+                        prompt=prompt,
+                        system_instruction=CONTEXTUALIZE_SYSTEM_INSTRUCTION,
+                        model=settings.gemini_model,
+                        provider="gemini",
+                        temperature=0.0,
+                        api_key=api_key,
+                    )
+                )
+                if cache is not None and raw:
+                    cache.put(key, raw, model=settings.gemini_model)
+                data = json.loads(raw)
+                standalone = str(data.get("standalone_query", "")).strip()
+                if standalone:
+                    return standalone
+            except Exception:
+                pass
         pass
 
     return question.strip()

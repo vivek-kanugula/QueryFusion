@@ -16,7 +16,9 @@ def _setup_test_environment():
 
 @pytest.fixture(autouse=True)
 def _clear_rate_limit_state():
+    import hybrid_rag.api.documents as _dmod
     import hybrid_rag.api.query as _qmod
 
     _qmod._request_counts.clear()
     _qmod._LAST_CLEANUP = 0.0
+    _dmod._upload_counts.clear()

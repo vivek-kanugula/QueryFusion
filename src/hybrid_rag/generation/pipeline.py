@@ -27,6 +27,7 @@ def generate_grounded_answer(
     provider: str | None = None,
     temperature: float = 0.0,
     verify: bool = True,
+    api_key: str | None = None,
 ) -> GenerationResponse:
     model_name = model or settings.gemini_model
     candidates = _get_final_candidates(trace)
@@ -40,6 +41,7 @@ def generate_grounded_answer(
         model=model_name,
         provider=provider,
         temperature=temperature,
+        api_key=api_key,
     )
 
     verification = None
@@ -52,6 +54,7 @@ def generate_grounded_answer(
             model=model_name,
             provider=provider,
             temperature=temperature,
+            api_key=api_key,
         )
 
     confidence = compute_confidence(answer, verification, trace)
