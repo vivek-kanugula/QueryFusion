@@ -49,3 +49,6 @@ ignore = ["E501"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = ["slow: integration tests that load ML models"]
+
+[tool.setuptools.package-data]
+"hybrid_rag.eval" = ["*.json"]
