@@ -76,11 +76,22 @@ def get_evaluation_results(db: Session = Depends(get_db)):
 @router.post("/seed")
 def seed_benchmark_results(force: bool = True, db: Session = Depends(get_db)):
     """Seed baseline benchmark evaluation runs into PostgreSQL."""
-    from hybrid_rag.eval.seed_benchmark import seed_evaluation_benchmark
+    try:
+        from hybrid_rag.eval.seed_benchmark import seed_evaluation_benchmark
 
-    runs = seed_evaluation_benchmark(db, force=force)
-    return {
-        "status": "success",
-        "strategies_seeded": len(runs),
-        "strategies": [r.retrieval_strategy for r in runs],
-    }
+        runs = seed_evaluation_benchmark(db, force=force)
+        return {
+            "status": "success",
+            "strategies_seeded": len(runs),
+            "strategies": [r.retrieval_strategy for r in runs],
+        }
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).error("Failed to seed benchmark: %s", exc, exc_info=True)
+        return {
+            "status": "error",
+            "message": str(exc),
+            "strategies_seeded": 0,
+            "strategies": [],
+        }
