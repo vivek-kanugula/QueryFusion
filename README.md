@@ -17,10 +17,11 @@
 [![Google Gemini](https://img.shields.io/badge/Google%20Gemini-3.5%20%2F%203.8-4285F4?style=flat-square&logo=google&logoColor=white)](https://ai.google.dev/)
 [![Groq](https://img.shields.io/badge/Groq-Llama%203.3%20Auxiliary-F05A28?style=flat-square)](https://groq.com/)
 [![Docker](https://img.shields.io/badge/Docker-GHCR%20Image-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/vivek-kanugula/QueryFusion/pkgs/container/queryfusion)
+[![Azure](https://img.shields.io/badge/Azure-Container%20Apps-0078D4?style=flat-square&logo=microsoftazure&logoColor=white)](https://azure.microsoft.com/)
 [![CI Gate](https://img.shields.io/badge/CI%20Gate-Passing%20(64%20Suites)-2ea44f?style=flat-square&logo=githubactions&logoColor=white)](https://github.com/vivek-kanugula/QueryFusion/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](./LICENSE)
 
-**[Architecture](#architecture) • [Empirical Benchmarks](#empirical-evaluation--benchmarks) • [Core Capabilities](#core-capabilities) • [Tech Stack](#technology-stack) • [Architectural Decisions](#architectural--engineering-decisions) • [Production Hardening](#production-incidents--battle-tested-hardening-war-stories) • [Database Schema](#database-schema) • [UI Walkthrough](#ui-walkthrough--management-console) • [Local Setup](#local-setup) • [API Reference](#api-reference)**
+**[Architecture](#architecture) • [Empirical Benchmarks](#empirical-evaluation--benchmarks) • [Core Capabilities](#core-capabilities) • [Tech Stack](#technology-stack) • [Architectural Decisions](#architectural--engineering-decisions) • [Production Hardening](#production-incidents--battle-tested-hardening-war-stories) • [Database Schema](#database-schema) • [UI Walkthrough](#ui-walkthrough--management-console) • [Local Setup](#local-setup) • [Azure Deployment](#production-cloud-deployment-azure-container-apps) • [API Reference](#api-reference)**
 
 <br/>
 
@@ -630,6 +631,80 @@ cd ..
 uv run uvicorn hybrid_rag.app:app --host 0.0.0.0 --port 8000 --reload
 ```
 Navigate to `http://localhost:8000` to access the application.
+
+---
+
+## Production Cloud Deployment (Azure Container Apps)
+
+<div align="justify">
+
+QueryFusion includes production-hardened infrastructure specifications for zero-cost, serverless deployment on **Azure Container Apps (ACA)** paired with **Azure Database for PostgreSQL Flexible Server**:
+
+</div>
+
+### Architecture & Cost Optimizations
+* **Container Runtime:** Deployed on Azure Container Apps Serverless Consumption tier provisioned with **2.0 vCPU and 4.0 GiB RAM**.
+* **Scale-to-Zero Inactivity Drain:** Configured with `minReplicas = 0` and `cooldownPeriod = 60s`. When no requests arrive for 60 seconds, container replicas scale completely to zero, eliminating idle compute and memory costs.
+* **Single-Replica State Protection:** `maxReplicas = 1` prevents in-memory BM25 index split-brain and ensures SSE streaming connections remain persistent.
+* **Managed Database:** Powered by Azure Database for PostgreSQL Flexible Server (**Standard_B1ms, 32 GB storage**) with native `pgvector` extension support in `eastus`.
+* **Automated CI/CD Delivery:** Pre-built container images published automatically to GitHub Container Registry (`ghcr.io/vivek-kanugula/queryfusion:latest`).
+* **Declarative Specification:** Managed via the declarative infrastructure manifest [`azure-container-app.yaml`](azure-container-app.yaml).
+
+### 1. Provision Azure Database for PostgreSQL Flexible Server
+```bash
+az postgres flexible-server create \
+  --resource-group queryfusion-rg \
+  --name queryfusion-db \
+  --location eastus \
+  --tier Burstable \
+  --sku-name Standard_B1ms \
+  --storage-size 32 \
+  --version 16 \
+  --admin-user qfadmin \
+  --admin-password "<your-secure-password>" \
+  --public-access 0.0.0.0
+```
+
+### 2. Deploy Container App to Azure Container Apps
+Deploy directly using the repository's infrastructure specification [`azure-container-app.yaml`](azure-container-app.yaml) or via Azure CLI:
+
+```bash
+# Create ACA Environment
+az containerapp env create \
+  --name queryfusion-env \
+  --resource-group queryfusion-rg \
+  --location eastus
+
+# Deploy Container App
+az containerapp create \
+  --name queryfusion-prod \
+  --resource-group queryfusion-rg \
+  --environment queryfusion-env \
+  --image ghcr.io/vivek-kanugula/queryfusion:latest \
+  --target-port 8080 \
+  --ingress external \
+  --cpu 2.0 \
+  --memory 4.0Gi \
+  --min-replicas 0 \
+  --max-replicas 1 \
+  --env-vars \
+    APP_ENV=production \
+    CONTAINER_CPU_LIMIT=2.0 \
+    PORT=8080 \
+    DATABASE_URL="postgresql+psycopg://qfadmin:<your-password>@queryfusion-db.postgres.database.azure.com:5432/postgres?sslmode=require" \
+    DATABASE_URL_DIRECT="postgresql+psycopg://qfadmin:<your-password>@queryfusion-db.postgres.database.azure.com:5432/postgres?sslmode=require" \
+    MAX_STORAGE_MB=3500 \
+    MAX_UPLOAD_SIZE_MB=100 \
+    MAX_DOCUMENTS_COUNT=250 \
+    DB_POOL_SIZE=5 \
+    DB_MAX_OVERFLOW=2 \
+    DB_POOL_TIMEOUT=10 \
+    BM25_USE_BLOB=true \
+    BM25_BLOB_PREFIX=bm25-indices \
+    GEMINI_API_KEY="<your-gemini-api-key>" \
+    GEMINI_MODEL=gemini-3.5-flash-lite \
+    GEMINI_VERIFIER_MODEL=gemini-3.5-flash
+```
 
 ---
 
