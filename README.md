@@ -18,7 +18,7 @@
 [![Groq](https://img.shields.io/badge/Groq-Llama%203.3%20Auxiliary-F05A28?style=flat-square)](https://groq.com/)
 [![Docker](https://img.shields.io/badge/Docker-GHCR%20Image-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/vivek-kanugula/QueryFusion/pkgs/container/queryfusion)
 [![Azure](https://img.shields.io/badge/Azure-Container%20Apps-0078D4?style=flat-square&logo=microsoftazure&logoColor=white)](https://azure.microsoft.com/)
-[![CI Gate](https://img.shields.io/badge/CI%20Gate-Passing%20(64%20Suites)-2ea44f?style=flat-square&logo=githubactions&logoColor=white)](https://github.com/vivek-kanugula/QueryFusion/actions)
+[![CI Gate](https://img.shields.io/badge/CI%20Gate-Passing%20--%201,093%20Tests-2ea44f?style=flat-square&logo=githubactions&logoColor=white)](https://github.com/vivek-kanugula/QueryFusion/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](./LICENSE)
 
 **[Architecture](#architecture) • [Empirical Benchmarks](#empirical-evaluation--benchmarks) • [Core Capabilities](#core-capabilities) • [Tech Stack](#technology-stack) • [Architectural Decisions](#architectural--engineering-decisions) • [Production Hardening](#production-incidents--battle-tested-hardening-war-stories) • [Database Schema](#database-schema) • [UI Walkthrough](#ui-walkthrough--management-console) • [Local Setup](#local-setup) • [Azure Deployment](#production-cloud-deployment-azure-container-apps) • [API Reference](#api-reference)**
@@ -169,6 +169,7 @@ flowchart TD
 | **Dense Embedding Model** | `BAAI/bge-small-en-v1.5` | Semantic Encoder | Produces 384-dimensional dense embeddings with explicit query instruction prefixing for asymmetric passage retrieval. |
 | **Cross-Encoder Reranker** | `BAAI/bge-reranker-base` | Relevance Re-scorer | Computes cross-attention relevance scores, normalized via sigmoid to `[0.0, 1.0]`. Managed via an asyncio semaphore to protect container RAM from OOM spikes. |
 | **Grounded LLM Generation** | Google Gemini 3.5 Flash Lite / 3.8 | Generation Engine | Produces structured JSON answers with inline citation markers (`[C1]`, `[C2]`) and exact evidence quotations under strict temperature controls. |
+| **Local & Air-Gapped LLM** | Ollama (`OLLAMA_HOST`) / Groq | Auxiliary & Local | Supports local offline inference via Ollama or accelerated auxiliary failover via Groq (Llama 3.3 70B) to eliminate cloud dependencies. |
 | **Auxiliary LLM & Key Pool** | Groq (Llama 3.3 70B) & Multi-Key Pool | Provider Fallback | Automatic circular rotation across multiple Gemini API keys with transparent failover to Groq to prevent free-tier 429 rate limit stalls. |
 | **Document Ingestion Suite** | PyMuPDF, BeautifulSoup4, Markdown-it | Content Extractors | Specialized parsers handling complex multi-column PDFs, HTML tables, and Markdown trees while retaining char offsets and section header metadata. |
 | **Object Storage** | S3-Compatible / Neon S3 / Azure Blob | Blob Storage | Stores original raw document uploads and serialized BM25 index tarballs for rapid container cold-boot restoration. |
@@ -586,7 +587,7 @@ cp .env.example .env
 # 3. Launch the full platform
 docker compose up -d
 
-# 4. Open http://localhost:8000 in your browser
+# 4. Open http://localhost:8080 in your browser (Docker default port 8080; port 8000 for local uvicorn)
 ```
 
 ---
@@ -739,12 +740,12 @@ Interactive OpenAPI Swagger documentation is available at `http://localhost:8000
 
 | Endpoint | Method | Authentication | Description |
 |---|:---:|:---:|---|
-| `/api/query` | `POST` | Public / Key | Execute synchronous hybrid retrieval, grounded generation, and verification |
-| `/api/query/stream` | `POST` | Public / Key | Open real-time Server-Sent Events (SSE) stream yielding answer tokens & telemetry |
+| `/api/query/classify` | `POST` | Public / Key | Classify query difficulty and calculate optimal dynamic alpha |
+| `/api/query/stream` | `POST` | Public / Key | Real-time Server-Sent Events (SSE) stream yielding answer tokens & telemetry |
 | `/api/v1/documents` | `POST` | Public / Key | Upload and ingest document with specified chunking strategy (`fixed`, `structure`, `semantic`) |
 | `/api/v1/documents` | `GET` | Public / Key | List all ingested documents with status, chunk counts, and storage size |
 | `/api/v1/documents/{id}` | `DELETE` | Public / Key | Delete document, cascade-delete chunks, and update in-memory BM25 index |
-| `/api/v1/evaluation/benchmark` | `GET` | Public / Key | Fetch latest evaluation benchmark metrics and radar data |
+| `/api/v1/evaluation/results` | `GET` | Public / Key | Fetch latest evaluation benchmark metrics and radar data |
 | `/api/v1/evaluation/seed` | `POST` | Public / Key | Instant seed of baseline empirical benchmark runs across all 4 strategies |
 | `/api/traces/{trace_id}` | `GET` | Public / Key | Inspect 4-stage candidate ranking progression and latency breakdown for a query |
 | `/health` | `GET` | Public | Liveness and readiness probe inspecting PostgreSQL and model readiness |
@@ -752,18 +753,18 @@ Interactive OpenAPI Swagger documentation is available at `http://localhost:8000
 ### Query Request Example
 
 ```bash
-curl -X POST http://localhost:8000/api/query \
+curl -N -X POST http://localhost:8080/api/query/stream \
   -H "Content-Type: application/json" \
   -d '{
-    "query": "What causes database connection pool starvation under high concurrency?",
-    "strategy": "hybrid",
-    "dense_top_k": 30,
-    "sparse_top_k": 30,
-    "fusion_top_k": 20,
-    "rerank_top_k": 5,
+    "question": "What causes database connection pool starvation under high concurrency?",
+    "retrieval_strategy": "hybrid_rerank",
+    "chunking_strategy": "auto",
     "alpha": 0.5,
-    "enable_reranker": true,
-    "enable_verification": true
+    "rerank_enabled": true,
+    "verify": true,
+    "temperature": 0.0,
+    "adaptive_alpha": true,
+    "query_expansion": false
   }'
 ```
 
